@@ -36,6 +36,46 @@ def use_skinny_gemm() -> bool:
 
 if current_platform.is_rocm():
 
+    import aiter as rocm_aiter
+    from aiter import get_hip_quant
+
+    aiter_per_tensor_quant = get_hip_quant(rocm_aiter.QuantType.per_Tensor)
+    aiter_per_token_quant = get_hip_quant(rocm_aiter.QuantType.per_Token)
+
+    def rocm_aiter_per_token_quant_fp8_impl(
+        input: torch.Tensor,
+        scale: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        return aiter_per_token_quant(input.contiguous(), scale, rocm_aiter.dtypes.fp8)
+
+    def rocm_aiter_per_token_quant_fp8_fake(
+        input: torch.Tensor,
+        scale: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        quantized = torch.empty_like(input,
+                                     dtype=torch.float8_e4m3fnuz,
+                                     device=input.device)
+        scale_tensor = torch.empty((*input.shape[:-1], 1),
+                                   dtype=torch.float32,
+                                   device=input.device)
+        return quantized, scale_tensor
+
+    def rocm_aiter_per_tensor_quant_fp8_impl(
+        input: torch.Tensor,
+        scale: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        return aiter_per_tensor_quant(input.contiguous(), scale, rocm_aiter.dtypes.fp8)
+
+    def rocm_aiter_per_tensor_quant_fp8_fake(
+        input: torch.Tensor,
+        scale: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        quantized = torch.empty_like(input,
+                                     dtype=torch.float8_e4m3fnuz,
+                                     device=input.device)
+        scale_tensor = torch.empty(1, dtype=torch.float32, device=input.device)
+        return quantized, scale_tensor
+        
     def rocm_aiter_gemm_a8w8_bpreshuffle_impl(
             input: torch.Tensor,
             weight: torch.Tensor,
@@ -70,6 +110,23 @@ if current_platform.is_rocm():
         return torch.empty((m, n), dtype=out_dtype, device=input.device)
 
     if current_platform.is_rocm():
+
+        direct_register_custom_op(
+            op_name="rocm_aiter_per_token_quant_fp8",
+            op_func=rocm_aiter_per_token_quant_fp8_impl,
+            mutates_args=[],
+            fake_impl=rocm_aiter_per_token_quant_fp8_fake,
+            dispatch_key=current_platform.dispatch_key,
+        )
+
+        direct_register_custom_op(
+            op_name="rocm_aiter_per_tensor_quant_fp8",
+            op_func=rocm_aiter_per_tensor_quant_fp8_impl,
+            mutates_args=[],
+            fake_impl=rocm_aiter_per_tensor_quant_fp8_fake,
+            dispatch_key=current_platform.dispatch_key,
+        )
+
         direct_register_custom_op(
             op_name="rocm_aiter_gemm_a8w8_bpreshuffle",
             op_func=rocm_aiter_gemm_a8w8_bpreshuffle_impl,
@@ -330,12 +387,23 @@ class Fp8LinearOp:
         # so fallback to naive if per channel or per token
         else:
             if input.dtype != current_platform.fp8_dtype():
-                # Maybe apply padding to output, see comment in __init__
-                qinput, x_scale = ops.scaled_fp8_quant(
-                    input_2d,
-                    input_scale,
-                    num_token_padding=self.output_padding,
-                    use_per_token_if_dynamic=use_per_token_if_dynamic)
+                
+                if not self.use_aiter_and_is_supported:
+                    # Maybe apply padding to output, see comment in __init__
+                    qinput, x_scale = ops.scaled_fp8_quant(
+                        input_2d,
+                        input_scale,
+                        num_token_padding=self.output_padding,
+                        use_per_token_if_dynamic=use_per_token_if_dynamic)
+                else:
+                    if use_per_token_if_dynamic:
+                        qinput, x_scale = (
+                            torch.ops.vllm.rocm_aiter_per_token_quant_fp8(
+                                input_2d, scale=input_scale))
+                    else:
+                        qinput, x_scale = (
+                            torch.ops.vllm.rocm_aiter_per_tensor_quant_fp8(
+                                input_2d, scale=input_scale))
             else:
                 qinput, x_scale = input_2d, input_scale
 
@@ -347,7 +415,6 @@ class Fp8LinearOp:
             if per_tensor_weights and per_tensor_activations:
                 if current_platform.is_rocm():
                     if self.use_aiter_and_is_supported:
-                        print("Using ROCm AITER for per-tensor W8A8 scaled mm")
                         return rocm_aiter_per_tensor_w8a8_scaled_mm(
                             qinput, weight, out_dtype, x_scale, weight_scale,
                             bias, input_2d, output_shape)
