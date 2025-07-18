@@ -191,6 +191,7 @@ from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar
 
 import torch
 
+import vllm.envs as envs
 from vllm import _custom_ops as ops
 from vllm.attention.backends.abstract import (AttentionBackend, AttentionLayer,
                                               AttentionMetadata,
@@ -625,10 +626,20 @@ class MLACommonImpl(MLAAttentionImpl[M], Generic[M]):
         # Hack for V1 for now to avoid torch library overhead (since we are
         # already inside an attention custom op), pull out the forward
         # method from the rotary embedding and call it directly
-        # TODO(lucas): we should probably find a cleaner way to do this
-        self.rotary_emb = rotary_emb.forward_native
-        if current_platform.is_cuda():
-            self.rotary_emb = rotary_emb.forward_cuda
+        # # TODO(lucas): we should probably find a cleaner way to do this
+        # self.rotary_emb = rotary_emb.forward_native
+        # if current_platform.is_cuda():
+        #     self.rotary_emb = rotary_emb.forward_cuda
+
+        self.use_rocm_aiter = current_platform.is_rocm(
+        ) and envs.VLLM_ROCM_USE_AITER and envs.VLLM_ROCM_USE_AITER_ROPE
+
+        if self.use_rocm_aiter:
+            self.rotary_emb = rotary_emb.forward_hip
+        else:
+            self.rotary_emb = rotary_emb.forward_native
+            if current_platform.is_cuda():
+                self.rotary_emb = rotary_emb.forward_cuda
 
         self.q_proj = q_proj
         self.kv_b_proj = kv_b_proj
@@ -939,9 +950,14 @@ class MLACommonImpl(MLAAttentionImpl[M], Generic[M]):
             assert attn_metadata.decode is not None
             decode_ql_nope, decode_q_pe = \
                 self._q_proj_and_k_up_proj(decode_hs_or_q_c)
-            decode_q_pe[...], decode_k_pe[...] = self.rotary_emb(
-                attn_metadata.decode.input_positions, decode_q_pe.contiguous(),
-                decode_k_pe)
+
+            if self.use_rocm_aiter:
+                self.rotary_emb(attn_metadata.decode.input_positions,
+                                decode_q_pe, decode_k_pe)
+            else:
+                decode_q_pe[...], decode_k_pe[...] = self.rotary_emb(
+                    attn_metadata.decode.input_positions,
+                    decode_q_pe.contiguous(), decode_k_pe)
 
         if has_prefill:
             assert attn_metadata.prefill is not None
@@ -949,9 +965,13 @@ class MLACommonImpl(MLAAttentionImpl[M], Generic[M]):
                 .view(-1, self.num_heads, self.qk_head_dim)
             prefill_q_pe = prefill_q[..., self.qk_nope_head_dim:]
 
-            prefill_q_pe[...], prefill_k_pe[...] = self.rotary_emb(
-                attn_metadata.prefill.input_positions,
-                prefill_q_pe.contiguous(), prefill_k_pe)
+            if self.use_rocm_aiter:
+                self.rotary_emb(attn_metadata.prefill.input_positions,
+                                prefill_q_pe, prefill_k_pe)
+            else:
+                prefill_q_pe[...], prefill_k_pe[...] = self.rotary_emb(
+                    attn_metadata.prefill.input_positions,
+                    prefill_q_pe.contiguous(), prefill_k_pe)
 
         # write the latent and rope to kv cache
         if kv_cache.numel() > 0:

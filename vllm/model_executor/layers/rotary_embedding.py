@@ -29,8 +29,12 @@ import torch
 import torch.nn as nn
 from transformers import PretrainedConfig
 
+import vllm.envs as envs
 from vllm.model_executor.custom_op import CustomOp
 from vllm.platforms import current_platform
+
+if current_platform.is_rocm():
+    from aiter.rotary_embedding import get_rope as aiter_get_rope
 
 
 def _rotate_neox(x: torch.Tensor) -> torch.Tensor:
@@ -1158,6 +1162,11 @@ def get_rope(
     dtype: Optional[torch.dtype] = None,
     partial_rotary_factor: float = 1.0,
 ) -> RotaryEmbedding:
+    if current_platform.is_rocm(
+    ) and envs.VLLM_ROCM_USE_AITER and envs.VLLM_ROCM_USE_AITER_ROPE:
+        return aiter_get_rope(head_size, rotary_dim, max_position, base,
+                              is_neox_style, rope_scaling, dtype,
+                              partial_rotary_factor)
     if dtype is None:
         dtype = torch.get_default_dtype()
     if rope_scaling is not None:
