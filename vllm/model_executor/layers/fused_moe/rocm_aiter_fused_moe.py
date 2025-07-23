@@ -231,26 +231,24 @@ def rocm_aiter_asm_moe_impl(
     block_shape: Optional[list[int]] = None,
     expert_mask: Optional[torch.Tensor] = None,
     activation_method: int = ActivationMethod.SILU.value,
+    quant_method: int = QuantMethod.NO.value,
 ) -> torch.Tensor:
-    from aiter import ActivationType
-    from aiter.fused_moe_bf16_asm import asm_moe
+    from aiter import ActivationType, QuantType 
+    from aiter.fused_moe import fused_moe
 
     activation = ActivationType(activation_method)
-    return asm_moe(
+    quant_type = QuantType(quant_method)
+
+    return fused_moe(
         hidden_states,
         w1,
         w2,
         topk_weights,
         topk_ids,
-        fc1_scale=fc1_scale,
-        fc2_scale=fc2_scale,
-        fc1_smooth_scale=fc1_smooth_scale,
-        fc2_smooth_scale=fc2_smooth_scale,
-        a16=a16,
-        per_tensor_quant_scale=per_tensor_quant_scale,
-        block_shape=None if block_shape is None else tuple(block_shape),
+        w1_scale=fc1_scale,
+        w2_scale=fc2_scale,
+        quant_type=quant_type,
         activation=activation,
-        expert_mask=expert_mask,
     )
 
 
@@ -269,6 +267,7 @@ def rocm_aiter_asm_moe_fake(
     block_shape: Optional[list[int]] = None,
     expert_mask: Optional[torch.Tensor] = None,
     activation_method: int = ActivationMethod.SILU.value,
+    quant_method: int = QuantMethod.NO.value,
 ) -> torch.Tensor:
     return torch.empty_like(hidden_states)
 
@@ -396,6 +395,21 @@ def rocm_aiter_fused_experts(
     else:
         expert_mask = None
 
+    quant_method = QuantMethod.NO.value
+    # w8a8 block-scaled
+    if block_shape is not None and use_fp8_w8a8:
+        assert not apply_router_weight_on_input, (
+            "apply_router_weight_on_input is\
+            not supported for block scaled moe")
+        assert w1_scale is not None
+        assert w2_scale is not None
+        quant_method = QuantMethod.BLOCK_128x128.value
+    elif per_channel_quant and use_fp8_w8a8:
+        quant_method = QuantMethod.PER_TOKEN.value
+    elif use_fp8_w8a8:
+        # Currently only per tensor quantization method is enabled.
+        quant_method = QuantMethod.PER_TENSOR.value
+
     # w8a8 per-channel quantization
     if per_channel_quant and apply_router_weight_on_input and use_fp8_w8a8:
         # AITER tkw1 kernel for FP8 models with `apply_router_weight_on_input`
@@ -437,24 +451,9 @@ def rocm_aiter_fused_experts(
             block_shape=block_shape,
             activation_method=activation_method,
             expert_mask=expert_mask,
+            quant_method=quant_method,
         )
     else:
-        quant_method = QuantMethod.NO.value
-
-        # w8a8 block-scaled
-        if block_shape is not None and use_fp8_w8a8:
-            assert not apply_router_weight_on_input, (
-                "apply_router_weight_on_input is\
-                not supported for block scaled moe")
-            assert w1_scale is not None
-            assert w2_scale is not None
-            quant_method = QuantMethod.BLOCK_128x128.value
-        elif per_channel_quant and use_fp8_w8a8:
-            quant_method = QuantMethod.PER_TOKEN.value
-        elif use_fp8_w8a8:
-            # Currently only per tensor quantization method is enabled.
-            quant_method = QuantMethod.PER_TENSOR.value
-
         if apply_router_weight_on_input:
             assert (topk_weights.dim() == 2
                     ), "`topk_weights` should be in shape (num_tokens, topk)"
