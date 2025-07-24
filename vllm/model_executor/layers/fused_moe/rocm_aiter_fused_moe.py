@@ -249,6 +249,7 @@ def rocm_aiter_asm_moe_impl(
         w2_scale=fc2_scale,
         quant_type=quant_type,
         activation=activation,
+        expert_mask=expert_mask,
     )
 
 
