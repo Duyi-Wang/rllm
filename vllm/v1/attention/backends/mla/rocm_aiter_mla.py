@@ -60,6 +60,11 @@ class AiterMLADecodeMetadata(MLACommonDecodeMetadata):
     # The query indptr, shape : [num_decode + 1]
     qo_indptr: Optional[torch.Tensor] = None
 
+    num_kv_splits_indptr: Optional[torch.Tensor] = None
+    batch_split_table: Optional[torch.Tensor] = None
+    split_table: Optional[torch.Tensor] = None
+    splits: Optional[torch.Tensor] = None
+
 
 class AiterMLAMetadata(MLACommonMetadata[AiterMLADecodeMetadata]):
     pass
@@ -158,12 +163,42 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
                                      dtype=torch.int32,
                                      device=device)
 
+        num_kv_splits_indptr = torch.empty(200, dtype=torch.int32, device=block_table.device)
+        batch_split_table = torch.empty(480, dtype=torch.int32, device=block_table.device)
+        split_table = torch.empty(480, dtype=torch.int32, device=block_table.device)
+        splits = torch.empty(1, dtype=torch.int32, device=block_table.device)
+ 
+        import aiter
+        max_seqlen_qo = 1
+
+        if max_seqlen_qo == 1 or paged_kv_indptr[-1] < 16 * 128:
+            num_kv_splits_indptr = None
+            batch_split_table = None
+            split_table = None
+            splits = None
+        else:
+            aiter.get_mla_metadata_impl(paged_kv_indptr, num_kv_splits_indptr, batch_split_table, split_table, splits)
+            # if get gpu hang, please use cpu metadata as following:
+            # num_kv_splits_indptr = torch.empty(200, dtype=torch.int32, device=block_table.device)
+            # kv_seq_les = torch.empty(200, dtype=torch.int32, device=block_table.device)
+            # aiter.mla.get_meta_param_balanced(paged_kv_indptr, num_kv_splits_indptr, batch_split_table, split_table, kv_seq_les, splits)
+
+            # double check
+            if num_kv_splits_indptr[0] == -1:
+                num_kv_splits_indptr=None
+                batch_split_table=None
+                split_table=None
+
         attn_metadata = AiterMLADecodeMetadata(
             block_table=block_table_tensor,
             seq_lens=seq_lens_device,
             paged_kv_indptr=paged_kv_indptr,
             paged_kv_indices=paged_kv_indices,
             paged_kv_last_page_len=paged_kv_last_page_len,
+            num_kv_splits_indptr=num_kv_splits_indptr,
+            batch_split_table=batch_split_table,
+            split_table=split_table,
+            splits=splits,
             qo_indptr=qo_indptr)
 
         return attn_metadata
@@ -246,10 +281,18 @@ class AiterMLAImpl(MLACommonImpl[AiterMLAMetadata]):
         # max_seqlen_qo must be 1 except for MTP
         # TODO: Find the best value for MTP
         max_seqlen_qo = 1
-        aiter_mla_decode_fwd(q, kv_buffer, o, self.scale,
-                             attn_metadata.decode.qo_indptr, max_seqlen_qo,
+        aiter_mla_decode_fwd(q, kv_buffer, o, 
+                             attn_metadata.decode.qo_indptr,
                              attn_metadata.decode.paged_kv_indptr,
                              attn_metadata.decode.paged_kv_indices,
-                             attn_metadata.decode.paged_kv_last_page_len)
+                             attn_metadata.decode.paged_kv_last_page_len,
+                             max_seqlen_qo, self.scale,
+                             True, 0.0, 1,
+                             attn_metadata.decode.num_kv_splits_indptr,
+                             attn_metadata.decode.batch_split_table,
+                             attn_metadata.decode.split_table,
+                             attn_metadata.decode.splits,
+                             )
 
         return o, None
+
