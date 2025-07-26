@@ -43,8 +43,14 @@ class CudaCommunicator(DeviceCommunicatorBase):
         self.use_torch_symm_mem = use_torch_symm_mem
 
         # lazy import to avoid documentation build error
-        from vllm.distributed.device_communicators.custom_all_reduce import (
-            CustomAllreduce)
+        from vllm.platforms import current_platform
+
+        if current_platform.is_rocm():
+            from aiter.dist.custom_all_reduce import CustomAllreduce
+        else:
+            from vllm.distributed.device_communicators.custom_all_reduce import (
+                CustomAllreduce,
+            )
         from vllm.distributed.device_communicators.pynccl import (
             PyNcclCommunicator)
         from vllm.distributed.device_communicators.quick_all_reduce import (
@@ -72,12 +78,15 @@ class CudaCommunicator(DeviceCommunicatorBase):
 
         if use_custom_allreduce and self.world_size > 1:
             # Initialize a custom fast all-reduce implementation.
-            self.ca_comm = CustomAllreduce(
-                group=self.cpu_group,
-                device=self.device,
-                symm_mem_enabled=(self.symm_mem_comm is not None
-                                  and not self.symm_mem_comm.disabled),
-            )
+            ca_comm_args = {
+                "group": self.cpu_group,
+                "device": self.device,
+            }
+            if not current_platform.is_rocm():
+                ca_comm_args["symm_mem_enabled"] = (self.symm_mem_comm is not None
+                                                   and not self.symm_mem_comm.disabled)
+            
+            self.ca_comm = CustomAllreduce(**ca_comm_args)
 
             if current_platform.is_rocm():
                 # Initialize a custom quick all-reduce implementation for AMD.
