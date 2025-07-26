@@ -29,8 +29,14 @@ class CudaCommunicator(DeviceCommunicatorBase):
         self.use_custom_allreduce = use_custom_allreduce
 
         # lazy import to avoid documentation build error
-        from vllm.distributed.device_communicators.custom_all_reduce import (
-            CustomAllreduce)
+        from vllm.platforms import current_platform
+
+        if current_platform.is_rocm():
+            from aiter.dist.custom_all_reduce import CustomAllreduce
+        else:
+            from vllm.distributed.device_communicators.custom_all_reduce import (
+                CustomAllreduce,
+            )
         from vllm.distributed.device_communicators.pynccl import (
             PyNcclCommunicator)
 
