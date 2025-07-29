@@ -304,7 +304,9 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
             num_expert_group=num_expert_group,
             custom_routing_function=custom_routing_function,
             scoring_func=scoring_func,
-            e_score_correction_bias=e_score_correction_bias)
+            e_score_correction_bias=e_score_correction_bias,
+            num_fused_shared_experts=layer.num_fused_shared_experts,
+            routed_scaling_factor=layer.routed_scaling_factor,)
 
         if self.rocm_aiter_moe_enabled:
             return self.rocm_aiter_fused_experts_func(
