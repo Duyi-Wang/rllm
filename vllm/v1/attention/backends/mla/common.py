@@ -239,6 +239,9 @@ if envs.VLLM_AITER_TRITON_FP8_BMM:
         else:
             y = batched_gemm_a8w8_a_per_token_group_prequant_w_per_batched_tensor_quant(x, w, w_s, group_size = group_size, transpose_bm = transpose_bm)
             return y
+        
+if envs.VLLM_AITER_TRITON_FUSED_CONCAT_ZEROS:
+    from aiter.ops.triton.fused_concat_zeros import fused_concat_zeros
             
 logger = init_logger(__name__)
 
@@ -725,6 +728,7 @@ class MLACommonImpl(MLAAttentionImpl[M], Generic[M]):
         x = x.view(-1, self.num_heads, self.kv_lora_rank).transpose(0, 1)
         if envs.VLLM_AITER_TRITON_FP8_BMM:
             # Multiply + Transpose (N, B, L) x (N, L, V) -> (N, B, V) -> (B, N, V)
+            # print(f"{x.dtype=}")
             x = aiter_triton_fp8_bmm_wrapper(x, self.W_V, self.W_V_scale, group_size = 128, transpose_bm = True)
             # Convert from (B, N, V) to (B, N * V)
             x = x.reshape(-1, self.num_heads * self.v_head_dim)
@@ -800,6 +804,13 @@ class MLACommonImpl(MLAAttentionImpl[M], Generic[M]):
         W_UK, W_UV = kv_b_proj_weight.split(
             [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
         
+        if envs.VLLM_AITER_TRITON_FUSED_CONCAT_ZEROS:
+            logger.info(f"[Triton] compiling fused_concat_zeros with shape = [1~128] {self.num_heads} [{self.kv_lora_rank} : {self.qk_rope_head_dim}]")
+            for m in range(1, 129):
+                x1 = torch.empty((m, self.num_heads, self.kv_lora_rank), dtype=torch.bfloat16, device=W_UK.device)
+                x2 = torch.empty((m, self.num_heads, self.qk_rope_head_dim), dtype=torch.bfloat16, device=W_UK.device)
+                fused_concat_zeros(x1, x2)
+
         if envs.VLLM_AITER_TRITON_FP8_BMM:
             W_K = W_UK.transpose(0, 1) # 16 512 128
             W_V = W_UV.permute(1, 2, 0) # 16 128 512
