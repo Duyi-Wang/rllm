@@ -627,6 +627,11 @@ class MLACommonMetadataBuilder(AttentionMetadataBuilder[M]):
         prefill.prefill_chunks = self._fi_prefill_chunks
 
     def _build_decode(self, block_table_tensor: torch.Tensor,
+                      work_indptr: torch.Tensor,
+                      work_info_set: torch.Tensor,
+                      reduce_indptr: torch.Tensor,
+                      reduce_final_map: torch.Tensor,
+                      reduce_partial_map: torch.Tensor,
                       seq_lens_cpu: torch.Tensor,
                       seq_lens_device: torch.Tensor,
                       query_start_loc_cpu: torch.Tensor,
@@ -634,6 +639,11 @@ class MLACommonMetadataBuilder(AttentionMetadataBuilder[M]):
                       num_decode_tokens: int) -> MLACommonDecodeMetadata:
         return MLACommonDecodeMetadata(
             block_table=block_table_tensor,
+            work_indptr=self.runner.work_indptr,
+            work_info_set=self.runner.work_info_set,
+            reduce_indptr=self.runner.reduce_indptr,
+            reduce_final_map=self.runner.reduce_final_map,
+            reduce_partial_map=self.runner.reduce_partial_map,
             seq_lens=seq_lens_device,
         )
 
