@@ -523,6 +523,25 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
     def _sync_device(self) -> None:
         torch.cuda.synchronize()
 
+        max_seqlen_qo = 2
+
+        self.work_indptr = torch.empty([81],
+                                       dtype=torch.int32,
+                                       device=self.device)
+        self.work_info_set = torch.empty([self.max_num_reqs + 80, 8],
+                                         dtype=torch.int32,
+                                         device=self.device)
+        self.reduce_indptr = torch.empty([self.max_num_reqs * max_seqlen_qo  + 1],
+                                         dtype=torch.int32,
+                                         device=self.device)
+        self.reduce_final_map = torch.empty([self.max_num_reqs * max_seqlen_qo, 2],
+                                            dtype=torch.int32,
+                                            device=self.device)
+        self.reduce_partial_map = torch.empty([self.max_num_reqs * max_seqlen_qo],
+                                              dtype=torch.int32,
+                                              device=self.device)
+
+
     def _update_states(self, scheduler_output: "SchedulerOutput") -> None:
         """Update the cached states and the persistent batch with the scheduler
         output.

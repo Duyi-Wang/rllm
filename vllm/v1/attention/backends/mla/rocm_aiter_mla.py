@@ -64,6 +64,11 @@ class AiterMLADecodeMetadata(MLACommonDecodeMetadata):
     batch_split_table: Optional[torch.Tensor] = None
     split_table: Optional[torch.Tensor] = None
     splits: Optional[torch.Tensor] = None
+    work_indptr: Optional[torch.Tensor] = None
+    work_info_set: Optional[torch.Tensor] = None
+    reduce_indptr: Optional[torch.Tensor] = None
+    reduce_final_map: Optional[torch.Tensor] = None
+    reduce_partial_map: Optional[torch.Tensor] = None
 
 
 class AiterMLAMetadata(MLACommonMetadata[AiterMLADecodeMetadata]):
@@ -110,6 +115,11 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
                                           device=device)
 
     def _build_decode(self, block_table_tensor: torch.Tensor,
+                      work_indptr: torch.Tensor,
+                      work_info_set: torch.Tensor,
+                      reduce_indptr: torch.Tensor,
+                      reduce_final_map: torch.Tensor,
+                      reduce_partial_map: torch.Tensor,
                       seq_lens_cpu: torch.Tensor,
                       seq_lens_device: torch.Tensor,
                       query_start_loc_cpu: torch.Tensor,
@@ -163,31 +173,44 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
                                      dtype=torch.int32,
                                      device=device)
 
-        num_kv_splits_indptr = torch.empty(200, dtype=torch.int32, device=block_table.device)
-        batch_split_table = torch.empty(480, dtype=torch.int32, device=block_table.device)
-        split_table = torch.empty(480, dtype=torch.int32, device=block_table.device)
-        splits = torch.empty(1, dtype=torch.int32, device=block_table.device)
+        # num_kv_splits_indptr = torch.empty(200, dtype=torch.int32, device=block_table.device)
+        # batch_split_table = torch.empty(480, dtype=torch.int32, device=block_table.device)
+        # split_table = torch.empty(480, dtype=torch.int32, device=block_table.device)
+        # splits = torch.empty(1, dtype=torch.int32, device=block_table.device)
  
         import aiter
         max_seqlen_qo = 1
+        num_kv_splits_indptr = None
+        # work_indptr = None
+        # work_info_set = None
+        # reduce_indptr = None
+        # reduce_final_map = None
+        # reduce_partial_map = None
 
-        if max_seqlen_qo == 1 or paged_kv_indptr[-1] < 16 * 128:
-            num_kv_splits_indptr = None
+        if max_seqlen_qo == 1:
             batch_split_table = None
             split_table = None
             splits = None
         else:
-            aiter.get_mla_metadata_impl(paged_kv_indptr, num_kv_splits_indptr, batch_split_table, split_table, splits)
+            # aiter.get_mla_metadata_impl(paged_kv_indptr, num_kv_splits_indptr, batch_split_table, split_table, splits)
             # if get gpu hang, please use cpu metadata as following:
             # num_kv_splits_indptr = torch.empty(200, dtype=torch.int32, device=block_table.device)
             # kv_seq_les = torch.empty(200, dtype=torch.int32, device=block_table.device)
             # aiter.mla.get_meta_param_balanced(paged_kv_indptr, num_kv_splits_indptr, batch_split_table, split_table, kv_seq_les, splits)
+            aiter.get_mla_metadata_v1(
+                qo_indptr,
+                paged_kv_indptr,
+                16,   # nhead // nhead_kv,
+                1,    # nhead_kv,
+                True,
+                work_info_set,
+                work_indptr,
+                reduce_indptr,
+                reduce_final_map,
+                reduce_partial_map,
+            )
 
-            # double check
-            if num_kv_splits_indptr[0] == -1:
-                num_kv_splits_indptr=None
-                batch_split_table=None
-                split_table=None
+
 
         attn_metadata = AiterMLADecodeMetadata(
             block_table=block_table_tensor,
@@ -196,9 +219,11 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
             paged_kv_indices=paged_kv_indices,
             paged_kv_last_page_len=paged_kv_last_page_len,
             num_kv_splits_indptr=num_kv_splits_indptr,
-            batch_split_table=batch_split_table,
-            split_table=split_table,
-            splits=splits,
+            work_indptr=work_indptr,
+            work_info_set=work_info_set,
+            reduce_indptr=reduce_indptr,
+            reduce_final_map=reduce_final_map,
+            reduce_partial_map=reduce_partial_map,
             qo_indptr=qo_indptr)
 
         return attn_metadata
@@ -289,9 +314,14 @@ class AiterMLAImpl(MLACommonImpl[AiterMLAMetadata]):
                              max_seqlen_qo, self.scale,
                              True, 0.0, 1,
                              attn_metadata.decode.num_kv_splits_indptr,
-                             attn_metadata.decode.batch_split_table,
-                             attn_metadata.decode.split_table,
-                             attn_metadata.decode.splits,
+                             attn_metadata.decode.work_indptr,
+                             attn_metadata.decode.work_info_set,
+                             attn_metadata.decode.reduce_indptr,
+                             attn_metadata.decode.reduce_final_map,
+                             attn_metadata.decode.reduce_partial_map,
+                             # attn_metadata.decode.batch_split_table,
+                             # attn_metadata.decode.split_table,
+                             # attn_metadata.decode.splits,
                              )
 
         return o, None

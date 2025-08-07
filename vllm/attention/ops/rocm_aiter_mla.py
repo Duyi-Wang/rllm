@@ -39,11 +39,17 @@ def aiter_mla_decode_fwd(
     logit_cap=0.0,
     num_kv_splits=None,
     num_kv_splits_indptr=None,
-    batch_split_table=None,
-    split_table=None,
-    splits=None,
-    q_rope=None,
-    k_rope=None, 
+    work_indptr=None,
+    work_info_set=None,
+    reduce_indptr=None,
+    reduce_final_map=None,
+    reduce_partial_map=None,
+
+    # batch_split_table=None,
+    # split_table=None,
+    # splits=None,
+    # q_rope=None,
+    # k_rope=None, 
 ):
     torch.ops.vllm.rocm_aiter_mla_decode_fwd(
         q,
@@ -59,11 +65,16 @@ def aiter_mla_decode_fwd(
         logit_cap,
         num_kv_splits,
         num_kv_splits_indptr,
-        batch_split_table,
-        split_table,
-        splits,
-        q_rope,
-        k_rope,
+        work_indptr,
+        work_info_set,
+        reduce_indptr,
+        reduce_final_map,
+        reduce_partial_map,
+        # batch_split_table,
+        # split_table,
+        # splits,
+        # q_rope,
+        # k_rope,
     )
 
 
@@ -81,11 +92,17 @@ def mla_decode_fwd_impl(
     logit_cap: Optional[float] = 0.0,
     num_kv_splits: Optional[int] = 1,
     num_kv_splits_indptr: Optional[torch.Tensor] = None,
-    batch_split_table: Optional[torch.Tensor] = None,
-    split_table: Optional[torch.Tensor] = None,
-    splits: Optional[torch.Tensor] = None,
-    q_rope: Optional[torch.Tensor] = None,
-    k_rope: Optional[torch.Tensor] = None, 
+    work_indptr: Optional[torch.Tensor] = None,
+    work_info_set: Optional[torch.Tensor] = None,
+    reduce_indptr: Optional[torch.Tensor] = None,
+    reduce_final_map: Optional[torch.Tensor] = None,
+    reduce_partial_map: Optional[torch.Tensor] = None,
+
+    # batch_split_table: Optional[torch.Tensor] = None,
+    # split_table: Optional[torch.Tensor] = None,
+    # splits: Optional[torch.Tensor] = None,
+    # q_rope: Optional[torch.Tensor] = None,
+    # k_rope: Optional[torch.Tensor] = None,
 ) -> None:
     from aiter.mla import mla_decode_fwd_dispatch
 
@@ -101,9 +118,14 @@ def mla_decode_fwd_impl(
                             logit_cap=logit_cap,
                             num_kv_splits=num_kv_splits,
                             num_kv_splits_indptr=num_kv_splits_indptr,
-                            batch_split_table=batch_split_table,
-                            split_table=split_table,
-                            cu_num=splits,
+                            work_indptr=work_indptr,
+                            work_info_set=work_info_set,
+                            reduce_indptr=reduce_indptr,
+                            reduce_final_map=reduce_final_map,
+                            reduce_partial_map=reduce_partial_map,
+                            # batch_split_table=batch_split_table,
+                            # split_table=split_table,
+                            # cu_num=splits,
                             )
 
 
@@ -121,11 +143,17 @@ def mla_decode_fwd_fake(
     logit_cap: Optional[float] = 0.0,
     num_kv_splits: Optional[int] = 1,
     num_kv_splits_indptr: Optional[torch.Tensor] = None,
-    batch_split_table: Optional[torch.Tensor] = None,
-    split_table: Optional[torch.Tensor] = None,
-    splits: Optional[torch.Tensor] = None,
-    q_rope: Optional[torch.Tensor] = None,
-    k_rope: Optional[torch.Tensor] = None, 
+    work_indptr: Optional[torch.Tensor] = None,
+    work_info_set: Optional[torch.Tensor] = None,
+    reduce_indptr: Optional[torch.Tensor] = None,
+    reduce_final_map: Optional[torch.Tensor] = None,
+    reduce_partial_map: Optional[torch.Tensor] = None,
+
+    # batch_split_table: Optional[torch.Tensor] = None,
+    # split_table: Optional[torch.Tensor] = None,
+    # splits: Optional[torch.Tensor] = None,
+    # q_rope: Optional[torch.Tensor] = None,
+    # k_rope: Optional[torch.Tensor] = None,
 ) -> None:
     pass
 
