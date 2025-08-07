@@ -65,6 +65,32 @@ class AiterMLADecodeMetadata(MLACommonDecodeMetadata):
 class AiterMLAMetadata(MLACommonMetadata[AiterMLADecodeMetadata]):
     pass
 
+import triton
+import triton.language as tl
+
+@triton.jit
+def create_kv_indices_triton(
+    block_table_ptr,
+    mask_ptr,
+    paged_kv_indices_ptr,
+    paged_kv_indptr,
+    block_table_ptr_stride: tl.constexpr,
+):
+    BLOCK_SIZE: tl.constexpr = 512
+    pid = tl.program_id(axis=0)
+    kv_start = tl.load(paged_kv_indptr + pid).to(tl.int32)
+    kv_end = tl.load(paged_kv_indptr + pid + 1).to(tl.int32)
+    num_loop = tl.cdiv(kv_end - kv_start, BLOCK_SIZE)
+    for i in range(num_loop):
+        offset = tl.arange(0, BLOCK_SIZE) + i * BLOCK_SIZE
+        mask = offset < kv_end - kv_start
+        data = tl.load(
+            block_table_ptr
+            + pid * block_table_ptr_stride
+            + offset,
+            mask=mask,
+        )
+        tl.store(paged_kv_indices_ptr + kv_start + offset, data, mask=mask)
 
 class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
 
@@ -83,7 +109,6 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
                              dtype=block_table.dtype,
                              device=block_table.device).unsqueeze(0)
                 < block_table_bounds.unsqueeze(1))
-        paged_kv_indices = block_table[mask]
 
         paged_kv_indptr = torch.cat([
             torch.zeros(1,
@@ -91,6 +116,13 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
                         device=block_table_bounds.device),
             block_table_bounds.cumsum(dim=0, dtype=torch.int32)
         ])
+
+        paged_kv_indices_tmp = torch.empty_like(block_table)
+        create_kv_indices_triton[(seq_lens.size(0),)](block_table, mask,
+                                                      paged_kv_indices_tmp,
+                                                      paged_kv_indptr,
+                                                      block_table.stride(0))
+        paged_kv_indices = paged_kv_indices_tmp.reshape(-1)
 
         paged_kv_last_page_len = seq_lens % page_size
         paged_kv_last_page_len = torch.where(paged_kv_last_page_len == 0,
