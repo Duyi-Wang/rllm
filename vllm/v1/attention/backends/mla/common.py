@@ -472,10 +472,21 @@ class MLACommonMetadataBuilder(Generic[M]):
         return modified_batch
 
     def _build_decode(self, input_positions: torch.Tensor,
-                      block_table: torch.Tensor, seq_lens: torch.Tensor):
+                      block_table: torch.Tensor,
+                      work_indptr: torch.Tensor,
+                      work_info_set: torch.Tensor,
+                      reduce_indptr: torch.Tensor,
+                      reduce_final_map: torch.Tensor,
+                      reduce_partial_map: torch.Tensor,
+                      seq_lens: torch.Tensor):
         return MLACommonDecodeMetadata(
             input_positions=input_positions,
             block_table=block_table,
+            work_indptr=self.runner.work_indptr,
+            work_info_set=self.runner.work_info_set,
+            reduce_indptr=self.runner.reduce_indptr,
+            reduce_final_map=self.runner.reduce_final_map,
+            reduce_partial_map=self.runner.reduce_partial_map,
             seq_lens=seq_lens,
         )
 
