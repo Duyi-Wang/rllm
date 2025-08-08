@@ -82,6 +82,7 @@ if TYPE_CHECKING:
     VLLM_ROCM_USE_AITER_MLA: bool = True
     VLLM_ROCM_USE_AITER_ROPE: bool = True
     VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS: bool = False
+    VLLM_ROCM_USE_AITER_FUSE_ROUTED_SCALING_FACTOR: bool = False
     VLLM_ROCM_USE_SKINNY_GEMM: bool = True
     VLLM_ROCM_FP8_PADDING: bool = True
     VLLM_ROCM_MOE_PADDING: bool = True
@@ -577,6 +578,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
     
     "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS":
     lambda: (os.getenv("VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS", "True").lower() in
+             ("true", "1")),
+
+    "VLLM_ROCM_USE_AITER_FUSE_ROUTED_SCALING_FACTOR":
+    lambda: (os.getenv("VLLM_ROCM_USE_AITER_FUSE_ROUTED_SCALING_FACTOR", "True").lower() in
              ("true", "1")),
              
     # Use skinny gemm for FP8 kernels

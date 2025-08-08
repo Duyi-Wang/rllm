@@ -44,6 +44,10 @@ def is_rocm_aiter_moe_enabled() -> bool:
 @cache
 def is_rocm_aiter_fusion_shared_expert_enabled() -> bool:
     return envs.VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS and is_rocm_aiter_moe_enabled()
+@cache
+def is_rocm_aiter_fuse_routed_scaling_factor() -> bool:
+    return envs.VLLM_ROCM_USE_AITER_FUSE_ROUTED_SCALING_FACTOR and is_rocm_aiter_moe_enabled()
+
 
 aiter_topK_meta_data = None
 
@@ -498,6 +502,9 @@ def rocm_aiter_grouped_topk(
     num_fused_shared_experts: int = 0,
     routed_scaling_factor: float = 1.0,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    routed_scaling_factor = (
+        routed_scaling_factor if is_rocm_aiter_fuse_routed_scaling_factor() else 1.0
+    )
     if e_score_correction_bias is not None:
         return torch.ops.vllm.rocm_aiter_biased_grouped_topk(
             gating_output,

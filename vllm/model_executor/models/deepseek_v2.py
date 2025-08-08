@@ -59,7 +59,9 @@ from .utils import (PPMissingLayer, is_pp_missing_parameter,
                     maybe_prefix)
 from vllm.model_executor.layers.fused_moe.rocm_aiter_fused_moe import (
     is_rocm_aiter_moe_enabled,
-    is_rocm_aiter_fusion_shared_expert_enabled)
+    is_rocm_aiter_fusion_shared_expert_enabled,
+    is_rocm_aiter_fuse_routed_scaling_factor,
+)
 
 
 class DeepseekV2MLP(nn.Module):
@@ -165,7 +167,7 @@ class DeepseekV2MoE(nn.Module):
             final_hidden_states = self.experts(
                 hidden_states=hidden_states,
                 router_logits=router_logits)
-            if not is_rocm_aiter_moe_enabled():
+            if not is_rocm_aiter_fuse_routed_scaling_factor():
                 final_hidden_states = final_hidden_states * self.routed_scaling_factor
         else:
             # Fix FP16 overflow

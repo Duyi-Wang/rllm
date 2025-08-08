@@ -19,6 +19,7 @@ from vllm.model_executor.custom_op import CustomOp
 from vllm.model_executor.layers.fused_moe.rocm_aiter_fused_moe import (
     is_rocm_aiter_moe_enabled,
     is_rocm_aiter_fusion_shared_expert_enabled,
+    is_rocm_aiter_fuse_routed_scaling_factor,
     init_aiter_topK_meta_data)
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig, QuantizeMethodBase)
@@ -498,7 +499,7 @@ class FusedMoE(torch.nn.Module):
                 top_k=self.top_k,
                 tp_rank=self.ep_rank if use_ep else tp_rank,
                 tp_size=self.ep_size if use_ep else tp_size,
-                shared_experts_score=1.0,
+                shared_experts_score=1.0 if is_rocm_aiter_fuse_routed_scaling_factor() else 1/self.routed_scaling_factor,
                 max_num_tokens=vllm_config.scheduler_config.max_num_batched_tokens,
                 is_EP=use_ep,
             )
