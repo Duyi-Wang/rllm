@@ -298,20 +298,25 @@ class AiterMLAImpl(MLACommonImpl[AiterMLAMetadata]):
         kv_c_and_k_pe_cache: torch.Tensor,
         attn_metadata: AiterMLAMetadata,
         layer: AttentionLayer,
-    ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+        q_nope_pe: torch.Tensor = None,
+        q_nope_zeros: torch.Tensor = None,
+        ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         assert kv_c_and_k_pe_cache.numel() > 0
         assert attn_metadata.decode is not None
 
-        if type(q) is tuple:
-            q = torch.cat(q, dim=-1)
+        if envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT and q_nope_pe is not None and q_nope_zeros is not None:
+            q, o = q_nope_pe, q_nope_zeros
+        else:
+            if type(q) is tuple:
+                q = torch.cat(q, dim=-1)
 
-        assert isinstance(q, torch.Tensor)
-        B = q.shape[0]
-        o = torch.zeros(B,
-                        self.num_heads,
-                        self.kv_lora_rank,
-                        dtype=q.dtype,
-                        device=q.device)
+            assert isinstance(q, torch.Tensor)
+            B = q.shape[0]
+            o = torch.zeros(B,
+                            self.num_heads,
+                            self.kv_lora_rank,
+                            dtype=q.dtype,
+                            device=q.device)
 
         kv_buffer = kv_c_and_k_pe_cache.unsqueeze(2)
 

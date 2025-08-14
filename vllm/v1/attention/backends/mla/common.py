@@ -249,6 +249,9 @@ if is_rocm_aiter_fp8bmm_enabled():
         batched_gemm_a8w8_a_per_token_group_prequant_w_per_batched_tensor_quant
         as aiter_triton_fp8_bmm)
 
+if envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT:
+    from aiter.ops.triton.fused_qk_concat import fused_qk_rope_cat_and_cache_mla
+
     def dynamic_per_batched_tensor_quant(
             x: torch.Tensor, dtype: torch.dtype = torch.float8_e4m3fn):
         DTYPE_MAX = torch.finfo(dtype).max
@@ -980,6 +983,9 @@ class MLACommonBaseImpl(MLAAttentionImpl[A], Generic[A]):
         kv_b_proj: ColumnParallelLinear,
         indexer=None,
         q_pad_num_heads: Optional[int] = None,
+        cos_cache: Optional[torch.Tensor] = None,
+        sin_cache: Optional[torch.Tensor] = None,
+        rotary_emb_is_neox_style: bool = False
     ) -> None:
         if kv_sharing_target_layer_name is not None:
             raise NotImplementedError("KV sharing is not supported for MLA")
@@ -999,6 +1005,10 @@ class MLACommonBaseImpl(MLAAttentionImpl[A], Generic[A]):
         self.kv_b_proj = kv_b_proj
         self.indexer = indexer
         self.q_pad_num_heads = q_pad_num_heads
+
+        self.cos_cache = cos_cache
+        self.sin_cache = sin_cache
+        self.rotary_emb_is_neox_style = rotary_emb_is_neox_style
 
     def process_weights_after_loading(self, act_dtype: torch.dtype):
 
@@ -1045,6 +1055,79 @@ class MLACommonBaseImpl(MLAAttentionImpl[A], Generic[A]):
 
         W_UK, W_UV = kv_b_proj_weight.split(
             [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
+
+        if envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT:
+            kv_cache_size = 8192
+            max_position_embedding = self.cos_cache.shape[0]
+            for prefill_decode_size in [1, 256, 2048]:
+                for decode_batch_size in [0, 1, 256]:
+                    if decode_batch_size > prefill_decode_size:
+                        continue
+
+                    k_scale = torch.ones(
+                        [
+                            1,
+                        ],
+                        dtype=torch.float32,
+                        device=W_UK.device,
+                    )[0]
+
+                    q = torch.empty(
+                        (
+                            decode_batch_size,
+                            self.num_heads,
+                            self.kv_lora_rank + self.qk_rope_head_dim,
+                        ),
+                        dtype=torch.bfloat16,
+                        device=W_UK.device,
+                    )
+                    decode_ql_nope = q[..., : self.kv_lora_rank]
+                    decode_q_pe = q[..., self.kv_lora_rank :]
+
+                    k = torch.empty(
+                        (
+                            prefill_decode_size,
+                            1,
+                            self.kv_lora_rank + self.qk_rope_head_dim,
+                        ),
+                        dtype=torch.bfloat16,
+                        device=W_UK.device,
+                    )
+                    k_c_normed = k[..., : self.kv_lora_rank].squeeze(1)
+                    k_pe = k[..., self.kv_lora_rank :]
+
+                    input_positions = torch.randint(
+                        0,
+                        max_position_embedding,
+                        (decode_batch_size,),
+                        device=W_UK.device,
+                    )
+                    slot_mapping = torch.randperm(kv_cache_size, device=W_UK.device)[
+                        :prefill_decode_size
+                    ]
+                    kv_cache = torch.empty(
+                        (kv_cache_size, 1, self.kv_lora_rank + self.qk_rope_head_dim),
+                        dtype=torch.bfloat16,
+                        device=W_UK.device,
+                    )
+
+                    logger.info(
+                        f"[Triton] compiling fused_qk_rope_cat_and_cache_mla with (decode tokens, total tokens) = ({decode_batch_size}, {prefill_decode_size})"
+                    )
+                    fused_qk_rope_cat_and_cache_mla(
+                        decode_ql_nope,
+                        decode_q_pe,
+                        k_c_normed.unsqueeze(1),
+                        k_pe,
+                        kv_cache,
+                        slot_mapping,
+                        input_positions,
+                        self.cos_cache,
+                        self.sin_cache,
+                        k_scale,
+                        self.rotary_emb_is_neox_style,
+                        output_q_nope_zeros=True,
+                    )
 
         if is_rocm_aiter_fp8bmm_enabled():
             W_K = W_UK.transpose(0, 1)  # 16 512 128
@@ -1708,7 +1791,23 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
         prefill_k_c_normed = k_c_normed[num_decode_tokens:]
 
         # write the latent and rope to kv cache
-        if kv_cache.numel() > 0:
+        q_nope_pe, q_nope_zeros = None, None
+        if envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT and has_decode and kv_cache.numel() > 0:
+            q_nope_pe, q_nope_zeros = fused_qk_rope_cat_and_cache_mla(
+                decode_ql_nope,
+                decode_q_pe,
+                k_c_normed.unsqueeze(1),
+                k_pe,
+                kv_cache,
+                attn_metadata.slot_mapping.flatten(),
+                attn_metadata.decode.input_positions,
+                self.cos_cache,
+                self.sin_cache,
+                layer._k_scale,
+                self.rotary_emb_is_neox_style,
+                output_q_nope_zeros=True
+            )
+        elif kv_cache.numel() > 0:
             ops.concat_and_cache_mla(
                 k_c_normed,
                 k_pe.squeeze(1),
@@ -1789,8 +1888,14 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
                 decode_q = get_dcp_group().all_gather(decode_q, dim=1)
 
             # call decode attn
-            attn_out, lse = self._forward_decode(decode_q, kv_cache,
-                                                 attn_metadata, layer)
+            attn_out, lse = self._forward_decode(
+                decode_q,
+                kv_cache,
+                attn_metadata,
+                layer,
+                q_nope_pe=q_nope_pe,
+                q_nope_zeros=q_nope_zeros,
+            )
 
             # recorect dcp attn_out with lse.
             if self.dcp_world_size > 1:
