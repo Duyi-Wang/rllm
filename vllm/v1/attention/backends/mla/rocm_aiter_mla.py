@@ -303,9 +303,18 @@ class AiterMLAImpl(MLACommonImpl[AiterMLAMetadata]):
         ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         assert kv_c_and_k_pe_cache.numel() > 0
         assert attn_metadata.decode is not None
-
-        if envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT and q_nope_pe is not None and q_nope_zeros is not None:
-            q, o = q_nope_pe, q_nope_zeros
+        
+        if envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT and q_nope_pe is not None:
+            if q_nope_zeros is not None:
+                q, o = q_nope_pe, q_nope_zeros
+            else:
+                q = q_nope_pe
+                B = q.shape[0]
+                o = torch.empty(B,
+                                self.num_heads,
+                                self.kv_lora_rank,
+                                dtype=torch.bfloat16,
+                                device=q.device)
         else:
             if type(q) is tuple:
                 q = torch.cat(q, dim=-1)
