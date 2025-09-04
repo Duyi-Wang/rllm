@@ -47,17 +47,18 @@ class FixFunctionalizationPass(VllmInductorPass):
                 # While functionalized, results at[1] and at[2] are scattered
                 # back into mm_node. After de-functionalization, we can just
                 # use mm_node directly.
+                mutated_args = {1: 'query', 2: 'key'}
                 for idx, user in self.getitem_users(node).items():
                     for user_of_getitem in user.users:
                         if is_func(user_of_getitem,
                                    torch.ops.aten.slice_scatter.default):
                             user_of_getitem.replace_all_uses_with(mm_node)
                             self._remove(user_of_getitem)
+                    user.replace_all_uses_with(kwargs[mutated_args[idx]])
                     self._remove(user)
 
                 self.insert_defunctionalized(graph, node)
                 self._remove(node)
-
             # rms_norm replacements avoid the most copies for LLaMa.
             elif at_target == torch.ops._C.fused_add_rms_norm.default:
                 mutated_args = {1: 'input', 2: 'residual'}
