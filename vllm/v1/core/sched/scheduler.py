@@ -35,6 +35,9 @@ from vllm.v1.request import Request, RequestStatus
 from vllm.v1.spec_decode.metrics import SpecDecodingStats
 from vllm.v1.structured_output import StructuredOutputManager
 
+# GW: import os to get envvar
+import os
+
 logger = init_logger(__name__)
 
 
@@ -162,6 +165,12 @@ class Scheduler(SchedulerInterface):
         )
         self.use_pp = self.parallel_config.pipeline_parallel_size > 1
 
+        # GW: Make force-waiting to achieve PD disagg profiling
+        self.waiting_threshold = int(os.getenv('MAX_CONC_PER_DP_RANK', '0'))
+        self.is_waiting_done = False
+        self.waiting_reqs_to_decode : list[Request] = []
+
+
     def schedule(self) -> SchedulerOutput:
         # NOTE(woosuk) on the scheduling algorithm:
         # There's no "decoding phase" nor "prefill phase" in the scheduler.
@@ -199,10 +208,39 @@ class Scheduler(SchedulerInterface):
         # For logging.
         scheduled_timestamp = time.monotonic()
 
+        # GW ADDED START
+        if len(self.running) == 0 and len(self.waiting) == 0:
+            #if self.waiting_threshold <= len(self.waiting_reqs_to_decode):
+            logger.info(f"[GW DEBUG] The number of waiting requests "
+                        f"to decoding is reached to threshold. "
+                        f"{len(self.waiting_reqs_to_decode)=}, {self.waiting_threshold=}")
+            #self.running.extend(self.waiting_reqs_to_decode[:self.waiting_threshold])
+            self.running.extend(self.waiting_reqs_to_decode)
+            self.waiting_reqs_to_decode.clear()
+        # GW ADDED END
+
         # First, schedule the RUNNING requests.
         req_index = 0
         while req_index < len(self.running) and token_budget > 0:
             request = self.running[req_index]
+
+            # GW ADDED START
+            # If input token num is same with computed (generated) token num,
+            # it means, the next forward_batch will be decode phase.
+            # So, store the those requests in temporary and execute decode 
+            # phase at once later.
+            if request.num_prompt_tokens == request.num_computed_tokens and not request.been_wait_decode:
+                self.running[req_index].been_wait_decode = True
+                self.waiting_reqs_to_decode.append(self.running.pop(req_index))
+                #req_index += 1 # GW : if popped out from self.running, the length get shorter.
+#                 logger.info(f"[GW DEBUG] Request stored to decode at once. "
+#                             #f"{request.num_prompt_tokens=}, {request.num_computed_tokens=}"
+#                             f"{len(self.waiting_reqs_to_decode)=}"
+#                         )
+                if len(self.running) == 0:
+                    break
+                continue
+            # GW ADDED END
 
             num_new_tokens = (request.num_tokens_with_spec +
                               request.num_output_placeholders -
@@ -329,7 +367,13 @@ class Scheduler(SchedulerInterface):
         skipped_waiting_requests = create_request_queue(self.policy)
 
         # Next, schedule the WAITING requests.
-        if not preempted_reqs:
+#         if self.waiting_threshold <= len(self.waiting):
+#             self.is_waiting_done = True
+#             logger.info(f"[GW DEBUG] Finally reached the threshold! {len(self.waiting)=}, {self.waiting_threshold}")
+#         elif self.is_waiting_done == False: # for debug
+#             logger.info(f"[GW DEBUG] Not reached the threshold yet. {len(self.waiting)=}, {self.waiting_threshold}")
+#         if not preempted_reqs and self.is_waiting_done :
+        if not preempted_reqs :
             while self.waiting and token_budget > 0:
                 if len(self.running) == self.max_num_running_reqs:
                     break
@@ -954,7 +998,7 @@ class Scheduler(SchedulerInterface):
 
     def get_request_counts(self) -> tuple[int, int]:
         """Returns (num_running_reqs, num_waiting_reqs)."""
-        return len(self.running), len(self.waiting)
+        return len(self.running) + len(self.waiting_reqs_to_decode), len(self.waiting)
 
     def add_request(self, request: Request) -> None:
         self.waiting.add_request(request)
@@ -1028,7 +1072,7 @@ class Scheduler(SchedulerInterface):
         del self.requests[request.request_id]
 
     def get_num_unfinished_requests(self) -> int:
-        return len(self.waiting) + len(self.running)
+        return len(self.waiting) + len(self.running) + len(self.waiting_reqs_to_decode)
 
     def has_finished_requests(self) -> bool:
         return len(self.finished_req_ids) > 0

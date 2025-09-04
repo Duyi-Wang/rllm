@@ -500,4 +500,7 @@ def reorder_batch_to_split_decodes_and_prefills(
         input_batch.swap_states(prefills[i - 1], decode_idx)
         modified_batch = True
 
+    # GW: Test to force no-modification to forward-batch
+    # modified_batch = False
+
     return modified_batch

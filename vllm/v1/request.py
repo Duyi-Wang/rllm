@@ -108,6 +108,9 @@ class Request:
         # indicates that the output is corrupted
         self.num_nans_in_logits = 0
 
+        # GW: Check the request have been waiting for pure decode batch
+        self.been_wait_decode = False
+
     @classmethod
     def from_engine_core_request(cls, request: EngineCoreRequest) -> "Request":
         if request.mm_inputs is not None:
