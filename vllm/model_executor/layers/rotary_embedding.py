@@ -815,6 +815,20 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbedding):
         offsets: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         """PyTorch-native implementation equivalent to forward()."""
+        if self.rotary_dim >= self.head_size and not self.is_neox_style:
+            q_copy = query
+            k_copy = key
+            return self.forward_cuda(positions, q_copy, k_copy, offsets)
+        else:
+            return self.forward_deepseek(positions, query,key, offsets)
+
+    def forward_deepseek(
+        self,
+        positions: torch.Tensor,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        offsets: Optional[torch.Tensor] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         assert key is not None
         query_rot = query[..., :self.rotary_dim]
         key_rot = key[..., :self.rotary_dim]
