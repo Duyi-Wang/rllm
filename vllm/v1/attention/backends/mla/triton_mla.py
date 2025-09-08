@@ -131,9 +131,6 @@ class TritonMLAImpl(MLACommonImpl[MLACommonMetadata]):
         assert kv_c_and_k_pe_cache.numel() > 0
         assert attn_metadata.decode is not None
 
-        if self.kv_cache_dtype.startswith("fp8"):
-            raise NotImplementedError("FP8 Triton MLA not yet supported")
-
         B = q_nope.shape[0]
 
         q = torch.cat([q_nope, q_pe], dim=-1)

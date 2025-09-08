@@ -90,6 +90,7 @@ if TYPE_CHECKING:
     VLLM_ROCM_USE_AITER_MOE: bool = True
     VLLM_ROCM_USE_AITER_RMSNORM: bool = True
     VLLM_ROCM_USE_AITER_MLA: bool = True
+    VLLM_ROCM_USE_AITER_MLA_FP8: bool = True
     VLLM_ROCM_USE_AITER_MHA: bool = True
     VLLM_ROCM_USE_SKINNY_GEMM: bool = True
     VLLM_ROCM_FP8_PADDING: bool = True
@@ -684,6 +685,12 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # By default is enabled.
     "VLLM_ROCM_USE_AITER_MLA":
     lambda: (os.getenv("VLLM_ROCM_USE_AITER_MLA", "True").lower() in
+             ("true", "1")),
+
+    # Whether to use aiter mla fp8 kernel.
+    # By default is enabled.
+    "VLLM_ROCM_USE_AITER_MLA_FP8":
+    lambda: (os.getenv("VLLM_ROCM_USE_AITER_MLA_FP8", "True").lower() in
              ("true", "1")),
 
     # Whether to use aiter mha ops.

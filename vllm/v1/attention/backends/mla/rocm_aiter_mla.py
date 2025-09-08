@@ -256,6 +256,9 @@ class AiterMLAImpl(MLACommonImpl[AiterMLAMetadata]):
 
         kv_buffer = kv_c_and_k_pe_cache.unsqueeze(2)
 
+        if envs.VLLM_ROCM_USE_AITER_MLA_FP8:
+            kv_buffer = kv_buffer.view(torch.float8_e4m3fnuz)
+
         # max_seqlen_qo must be 1 except for MTP
         # TODO: Find the best value for MTP
         max_seqlen_qo = 1

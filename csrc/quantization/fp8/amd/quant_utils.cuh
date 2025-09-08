@@ -58,13 +58,8 @@ __inline__ __device__ Tout scaled_vec_conversion(const Tin& x,
   return x;
 }
 
-    #if HIP_FP8_TYPE_OCP
-using fp8_type = __hip_fp8_e4m3;
-using fp8x2_type = __hip_fp8x2_e4m3;
-    #else
 using fp8_type = __hip_fp8_e4m3_fnuz;
 using fp8x2_type = __hip_fp8x2_e4m3_fnuz;
-    #endif
 
 // fp8 -> half
 template <>
