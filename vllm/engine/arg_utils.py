@@ -1218,7 +1218,7 @@ class EngineArgs:
             cuda_graph_sizes=self.cuda_graph_sizes,
             num_lookahead_slots=num_lookahead_slots,
             delay_factor=self.scheduler_delay_factor,
-            enable_chunked_prefill=self.enable_chunked_prefill,
+            enable_chunked_prefill=False,
             disable_chunked_mm_input=self.disable_chunked_mm_input,
             is_multimodal_model=model_config.is_multimodal_model,
             preemption_mode=self.preemption_mode,

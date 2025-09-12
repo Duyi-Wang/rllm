@@ -18,6 +18,7 @@ from vllm.v1.attention.backends.mla.common import (MLACommonBackend,
                                                    MLACommonMetadata,
                                                    MLACommonMetadataBuilder)
 from vllm.v1.kv_cache_interface import AttentionSpec
+from vllm.attention.backends.abstract import is_quantized_kv_cache
 
 # yapf: enable
 
@@ -256,7 +257,7 @@ class AiterMLAImpl(MLACommonImpl[AiterMLAMetadata]):
 
         kv_buffer = kv_c_and_k_pe_cache.unsqueeze(2)
 
-        if envs.VLLM_ROCM_USE_AITER_MLA_FP8:
+        if is_quantized_kv_cache(self.kv_cache_dtype):
             kv_buffer = kv_buffer.view(torch.float8_e4m3fnuz)
 
         # max_seqlen_qo must be 1 except for MTP
