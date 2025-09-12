@@ -289,11 +289,14 @@ class EngineCore:
         if not self.scheduler.has_requests():
             return {}, False
         scheduler_output = self.scheduler.schedule()
+        # logger.info(f"zovlog:========>preapre execute model,before that {scheduler_output = }")
         model_output = self.execute_model_with_error_logging(
             self.model_executor.execute_model,  # type: ignore
             scheduler_output)
+        # logger.info(f"zovlog0831: quit model forward,check is none {scheduler_output = },{model_output = }")
         engine_core_outputs = self.scheduler.update_from_output(
             scheduler_output, model_output)  # type: ignore
+        # logger.info(f"zovlog:++++++> {engine_core_outputs = }")
 
         return (engine_core_outputs,
                 scheduler_output.total_num_scheduled_tokens > 0)
@@ -718,6 +721,7 @@ class EngineCoreProc(EngineCore):
                 logger.exception("EngineCore failed to start.")
             else:
                 logger.exception("EngineCore encountered a fatal error.")
+                logger.error(f"zovlog:========> engine go die...............e = {e}")
                 engine_core._send_engine_dead()
             raise e
         finally:
@@ -832,7 +836,7 @@ class EngineCoreProc(EngineCore):
         # Msgpack serialization decoding.
         add_request_decoder = MsgpackDecoder(EngineCoreRequest)
         generic_decoder = MsgpackDecoder()
-
+        # logger.info(f"zovlog:------>{input_addresses = }")
         with ExitStack() as stack, zmq.Context() as ctx:
             input_sockets = [
                 stack.enter_context(
@@ -872,7 +876,9 @@ class EngineCoreProc(EngineCore):
             ready_event.set()
             del ready_event
             while True:
+                # logger.info(f"zovlog:--------> input socket polling!")
                 for input_socket, _ in poller.poll():
+                    # logger.info(f"zovlog:--------> input socket triggered!")
                     # (RequestType, RequestData)
                     type_frame, *data_frames = input_socket.recv_multipart(
                         copy=False)
@@ -886,7 +892,9 @@ class EngineCoreProc(EngineCore):
                     else:
                         request = generic_decoder.decode(data_frames)
 
-                    # Push to input queue for core busy loop.
+                    # Push to input queue for core busy loop. 
+                    # if not isinstance(request[0],int): 
+                    #     logger.info(f"zovlog:process input socket {request = },{type(request) = },{request[0].kv_transfer_params = }")
                     self.input_queue.put_nowait((request_type, request))
 
     def process_output_sockets(self, output_paths: list[str],
@@ -919,6 +927,7 @@ class EngineCoreProc(EngineCore):
 
             while True:
                 output = self.output_queue.get()
+                # logger.info(f"zovlog:=====> output socket get output index:{output}")
                 if output == EngineCoreProc.ENGINE_CORE_DEAD:
                     for socket in sockets:
                         socket.send(output)
