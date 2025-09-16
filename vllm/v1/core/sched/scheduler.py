@@ -9,6 +9,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from typing import Any, Optional, Union
 
+import vllm.envs as envs
 from vllm.config import VllmConfig
 from vllm.distributed.kv_events import EventPublisherFactory, KVEventBatch
 from vllm.distributed.kv_transfer.kv_connector.factory import (
@@ -40,6 +41,7 @@ import os
 
 logger = init_logger(__name__)
 
+BATCH_DECODE_TIME_THRESHOLD = 2.0
 
 class Scheduler(SchedulerInterface):
 
@@ -169,6 +171,7 @@ class Scheduler(SchedulerInterface):
         self.waiting_threshold = int(os.getenv('MAX_CONC_PER_DP_RANK', '0'))
         self.is_waiting_done = False
         self.waiting_reqs_to_decode : list[Request] = []
+        self.last_add_req_time = time.monotonic()
 
 
     def schedule(self) -> SchedulerOutput:
@@ -209,7 +212,8 @@ class Scheduler(SchedulerInterface):
         scheduled_timestamp = time.monotonic()
 
         # GW ADDED START
-        if len(self.running) == 0 and len(self.waiting) == 0:
+        if len(self.running) == 0 and len(self.waiting) == 0 and \
+            (scheduled_timestamp - self.last_add_req_time) > BATCH_DECODE_TIME_THRESHOLD:
             #if self.waiting_threshold <= len(self.waiting_reqs_to_decode):
             logger.info(f"[GW DEBUG] The number of waiting requests "
                         f"to decoding is reached to threshold. "
@@ -430,6 +434,9 @@ class Scheduler(SchedulerInterface):
                             self.connector.get_num_new_matched_tokens(
                                 request, num_new_local_computed_tokens))
 
+                    if envs.VLLM_SKIP_PREFILL:
+                        num_external_computed_tokens = max(request.num_tokens - 1, 0)
+
                     # Total computed tokens (local + external).
                     num_computed_tokens = (num_new_local_computed_tokens +
                                            num_external_computed_tokens)
@@ -454,6 +461,7 @@ class Scheduler(SchedulerInterface):
                     # `request.num_prompt_tokens` to consider the resumed
                     # requests, which have output tokens.
                     num_new_tokens = request.num_tokens - num_computed_tokens
+
                     if (0 < self.scheduler_config.long_prefill_token_threshold
                             < num_new_tokens):
                         num_new_tokens = (
@@ -1005,6 +1013,7 @@ class Scheduler(SchedulerInterface):
         self.requests[request.request_id] = request
         if self.log_stats:
             request.record_event(EngineCoreEventType.QUEUED)
+        self.last_add_req_time = time.monotonic()
 
     def finish_requests(
         self,
