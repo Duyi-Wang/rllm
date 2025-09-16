@@ -125,10 +125,10 @@ class MoRIIOWrapper():
     
     
     def build_session(self):
-        self.sessiones.append(self.moriio_engine.create_session(self.local_memory, self.remote_memory_metadata))
+        self.sessiones.append(self.moriio_engine.create_session(self.local_memory_metadata, self.remote_memory_metadata))
 
 
-
+        b=0
 
 
     def read_remote_data(self,transfer_size_byte,local_offset = 0,remote_offset = 0, sess_idx=0):
@@ -722,7 +722,7 @@ class MoRIIOConnectorWorker:
         # List of block window sizes for each layer for local attention
         self.block_window_per_layer: list[Optional[int]] = []
         self.use_mla = self.model_config.use_mla
-
+        self.builded_session = False
         backend = get_attn_backend(self.model_config.get_head_size(),
                                    self.model_config.dtype,
                                    self.cache_config.cache_dtype,
@@ -887,12 +887,7 @@ class MoRIIOConnectorWorker:
             setup_agent_time = time.perf_counter()
             logger.debug("MoRIIO handshake: add agent took: %s",setup_agent_time - got_metadata_time)
 
-        for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
-            # logger.error(f"zovlog:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
-            stride = self.kv_caches[layer_name].stride()
-            self.moriio_wrapper.set_local_memory_metadata(local_kv_cache_metadata[0])
-            self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_name][0])
-            self.moriio_wrapper.build_session()
+      
         # Remote rank -> agent name.
         # logger.info(f"zovlog:====> {p_remote_rank = },{remote_agent_name = }")
         return {p_remote_rank: remote_agent_name}
@@ -926,6 +921,7 @@ class MoRIIOConnectorWorker:
             self._ready_requests.put(entry)
             self.load_kv_flag = True 
 
+      
         fut.add_done_callback(request_ready)
 
     def register_kv_caches(self, kv_caches: dict[str, torch.Tensor]):
@@ -1433,19 +1429,31 @@ class MoRIIOConnectorWorker:
         import time
         start = time.perf_counter()
 
+        
+        
+        if not self.builded_session:
+            for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
+            # logger.error(f"zovlog:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
+                stride = self.kv_caches[layer_name].stride()
+                self.moriio_wrapper.set_local_memory_metadata(local_kv_cache_metadata[0])
+                self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_name][0])
+                self.moriio_wrapper.build_session()
+            self.builded_session=True
         layername0 = list(self.layer_name_to_local_kv_cache_metadata.keys())[0]
         # logger.info(f"tensor:{layername0}:::{self.kv_caches[layername0].sum() = }")
         # self.kv_caches
         # contiguous_ids = search_contiguous_block_ids(local_block_ids,remote_block_ids)
         _,blknum,blksize,hn,hs = self.kv_cache_shape
         # stride = [blknum*blksize*hn*hs   ,blksize*hs*hn   ,hs*hn   ,hs   ,1]
-        for idx,layer_name,local_kv_cache_metadata in enumerate(self.layer_name_to_local_kv_cache_metadata.items()):
+        sess_idx=0
+        for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
             # logger.error(f"zovlog:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
             stride = self.kv_caches[layer_name].stride()
             # self.moriio_wrapper.set_local_memory_metadata(local_kv_cache_metadata[0])
             # self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_name][0])
             # 在local_block_ids这个序列中,判断一下那些是连续的
             # for start,end in zip(contiguous_ids[])
+            #todo make batch_read
             for idx,local_blkid in enumerate(local_block_ids):
                 offset_k_local = self.kv_caches[layer_name].element_size() * (0 * stride[0] + local_blkid * stride[1])
                 offset_v_local = self.kv_caches[layer_name].element_size() * (1 * stride[0] + local_blkid * stride[1])
@@ -1453,9 +1461,9 @@ class MoRIIOConnectorWorker:
                 offset_v_remote = self.kv_caches[layer_name].element_size() * (1 * stride[0] + remote_block_ids[idx] * stride[1])
                 transfer_size_byte = blksize * hn * hs * self.kv_caches[layer_name].element_size()
                 # logger.info(f"zovlog:===========>{self.kv_cache_shape = },{layer_name = },{offset_k = },{offset_v = },{transfer_size_byte = },{blkid = },{stride = }")
-                self.moriio_wrapper.read_remote_data(transfer_size_byte,offset_v_local,offset_v_remote,idx)
-                self.moriio_wrapper.read_remote_data(transfer_size_byte,offset_k_local,offset_k_remote,idx)
-
+                self.moriio_wrapper.read_remote_data(transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
+                self.moriio_wrapper.read_remote_data(transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
+            sess_idx+=1
         self.moriio_wrapper.waiting_for_read_complete()
         
         # 结束计时
