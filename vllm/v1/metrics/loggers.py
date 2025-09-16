@@ -123,7 +123,7 @@ class LoggingStatLogger(StatLoggerBase):
             "Engine %03d: "
             "Avg prompt throughput: %.1f tokens/s, "
             "Avg generation throughput: %.1f tokens/s, "
-            "Running: %d reqs, Waiting: %d reqs, "
+            "Running: %d reqs, Waiting: %d reqs, Ready-to-decode: %d, "
             "GPU KV cache usage: %.1f%%, "
             "Prefix cache hit rate: %.1f%%",
             self.engine_index,
@@ -131,6 +131,7 @@ class LoggingStatLogger(StatLoggerBase):
             generation_throughput,
             scheduler_stats.num_running_reqs,
             scheduler_stats.num_waiting_reqs,
+            scheduler_stats.num_ready_to_decode_reqs,
             scheduler_stats.kv_cache_usage * 100,
             self.prefix_caching_metrics.hit_rate * 100,
         )

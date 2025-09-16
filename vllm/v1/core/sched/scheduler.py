@@ -36,7 +36,6 @@ from vllm.v1.request import Request, RequestStatus
 from vllm.v1.spec_decode.metrics import SpecDecodingStats
 from vllm.v1.structured_output import StructuredOutputManager
 
-# GW: import os to get envvar
 import os
 
 logger = init_logger(__name__)
@@ -167,7 +166,8 @@ class Scheduler(SchedulerInterface):
         )
         self.use_pp = self.parallel_config.pipeline_parallel_size > 1
 
-        # GW: Make force-waiting to achieve PD disagg profiling
+        # NOTE(GW): Make force-waiting to achieve PD disagg profiling.
+        # MAX_CONC_PER_DP_RANK is not currenly used.
         self.waiting_threshold = int(os.getenv('MAX_CONC_PER_DP_RANK', '0'))
         self.is_waiting_done = False
         self.waiting_reqs_to_decode : list[Request] = []
@@ -211,24 +211,22 @@ class Scheduler(SchedulerInterface):
         # For logging.
         scheduled_timestamp = time.monotonic()
 
-        # GW ADDED START
-        if len(self.running) == 0 and len(self.waiting) == 0 and \
+        # NOTE(GW): Move all ready-to-decode requests into running queue
+        # when no running or waiting requests exists.
+        if len(self.running) == 0 and \
             (scheduled_timestamp - self.last_add_req_time) > BATCH_DECODE_TIME_THRESHOLD:
-            #if self.waiting_threshold <= len(self.waiting_reqs_to_decode):
-            logger.info(f"[GW DEBUG] The number of waiting requests "
-                        f"to decoding is reached to threshold. "
-                        f"{len(self.waiting_reqs_to_decode)=}, {self.waiting_threshold=}")
-            #self.running.extend(self.waiting_reqs_to_decode[:self.waiting_threshold])
+            logger.info(f"All prefill requests are done. "
+                        f"Starting decode phase for all ready-to-decode requests. "
+                        f"Ready-to-decode requests number: {len(self.waiting_reqs_to_decode)} reqs")
             self.running.extend(self.waiting_reqs_to_decode)
             self.waiting_reqs_to_decode.clear()
-        # GW ADDED END
 
         # First, schedule the RUNNING requests.
         req_index = 0
         while req_index < len(self.running) and token_budget > 0:
             request = self.running[req_index]
 
-            # GW ADDED START
+            # NOTE(GW):
             # If input token num is same with computed (generated) token num,
             # it means, the next forward_batch will be decode phase.
             # So, store the those requests in temporary and execute decode 
@@ -236,15 +234,9 @@ class Scheduler(SchedulerInterface):
             if request.num_prompt_tokens == request.num_computed_tokens and not request.been_wait_decode:
                 self.running[req_index].been_wait_decode = True
                 self.waiting_reqs_to_decode.append(self.running.pop(req_index))
-                #req_index += 1 # GW : if popped out from self.running, the length get shorter.
-#                 logger.info(f"[GW DEBUG] Request stored to decode at once. "
-#                             #f"{request.num_prompt_tokens=}, {request.num_computed_tokens=}"
-#                             f"{len(self.waiting_reqs_to_decode)=}"
-#                         )
                 if len(self.running) == 0:
                     break
                 continue
-            # GW ADDED END
 
             num_new_tokens = (request.num_tokens_with_spec +
                               request.num_output_placeholders -
@@ -269,7 +261,6 @@ class Scheduler(SchedulerInterface):
                  new_encoder_budget) = self._try_schedule_encoder_inputs(
                      request, request.num_computed_tokens, num_new_tokens,
                      encoder_budget)
-
             if num_new_tokens == 0:
                 # The request cannot be scheduled because one of the following
                 # reasons:
@@ -306,6 +297,8 @@ class Scheduler(SchedulerInterface):
                     self.kv_cache_manager.free(preempted_req)
                     preempted_req.status = RequestStatus.PREEMPTED
                     preempted_req.num_computed_tokens = 0
+                    preempted_req.been_wait_decode = False
+
                     if self.log_stats:
                         preempted_req.record_event(
                             EngineCoreEventType.PREEMPTED, scheduled_timestamp)
@@ -371,13 +364,7 @@ class Scheduler(SchedulerInterface):
         skipped_waiting_requests = create_request_queue(self.policy)
 
         # Next, schedule the WAITING requests.
-#         if self.waiting_threshold <= len(self.waiting):
-#             self.is_waiting_done = True
-#             logger.info(f"[GW DEBUG] Finally reached the threshold! {len(self.waiting)=}, {self.waiting_threshold}")
-#         elif self.is_waiting_done == False: # for debug
-#             logger.info(f"[GW DEBUG] Not reached the threshold yet. {len(self.waiting)=}, {self.waiting_threshold}")
-#         if not preempted_reqs and self.is_waiting_done :
-        if not preempted_reqs :
+        if not preempted_reqs:
             while self.waiting and token_budget > 0:
                 if len(self.running) == self.max_num_running_reqs:
                     break
@@ -1100,6 +1087,7 @@ class Scheduler(SchedulerInterface):
         return SchedulerStats(
             num_running_reqs=len(self.running),
             num_waiting_reqs=len(self.waiting),
+            num_ready_to_decode_reqs=len(self.waiting_reqs_to_decode),
             kv_cache_usage=self.kv_cache_manager.usage,
             prefix_cache_stats=prefix_cache_stats,
             spec_decoding_stats=spec_decoding_stats,

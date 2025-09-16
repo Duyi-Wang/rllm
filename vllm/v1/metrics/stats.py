@@ -32,6 +32,7 @@ class SchedulerStats:
 
     num_running_reqs: int = 0
     num_waiting_reqs: int = 0
+    num_ready_to_decode_reqs: int = 0
 
     kv_cache_usage: float = 0.0
 
