@@ -746,6 +746,7 @@ def main(args: argparse.Namespace):
             ).sample(
                 tokenizer=tokenizer,
                 num_requests=args.num_prompts,
+                input_len=args.sharegpt_input_len,
                 output_len=args.sharegpt_output_len,
             ),
             "burstgpt": lambda: BurstGPTDataset(
@@ -1139,6 +1140,13 @@ def create_argument_parser():
     )
 
     sharegpt_group = parser.add_argument_group("sharegpt dataset options")
+    sharegpt_group.add_argument(
+        "--sharegpt-input-len",
+        type=int,
+        default=1024,
+        help="Input length for each request. Overrides the input length "
+        "from the ShareGPT dataset.",
+    )
     sharegpt_group.add_argument(
         "--sharegpt-output-len",
         type=int,
