@@ -1168,7 +1168,7 @@ def create_argument_parser():
     sharegpt_group.add_argument(
         "--sharegpt-input-len",
         type=int,
-        default=1024,
+        default=None,
         help="Input length for each request. Overrides the input length "
         "from the ShareGPT dataset.",
     )

@@ -430,41 +430,60 @@ class ShareGPTDataset(BenchmarkDataset):
             new_output_len = len(completion_ids) if output_len is None else output_len
 
             # Make fixed size len
-            remaining_len = input_len - new_prompt_len
-            if prompt_len > 2000 or prompt_len < 100:
-                continue
-            if remaining_len > prompt_len:
-                new_prompt = new_prompt + ' ' + prompt
-                new_prompt_ids = tokenizer(new_prompt).input_ids
-                new_prompt_len = len(new_prompt_ids)
+            if input_len:
+                remaining_len = input_len - new_prompt_len
+                if prompt_len > 2000 or prompt_len < 100:
+                    continue
+                if remaining_len > prompt_len:
+                    new_prompt = new_prompt + ' ' + prompt
+                    new_prompt_ids = tokenizer(new_prompt).input_ids
+                    new_prompt_len = len(new_prompt_ids)
+                    continue
+                else:
+                    new_prompt = new_prompt + tokenizer.decode(prompt_ids[:remaining_len])
+                    new_prompt_ids = tokenizer(new_prompt).input_ids
+                    new_prompt_len = len(new_prompt_ids)
+                    if not is_valid_sequence(
+                        new_prompt_len,
+                        new_output_len,
+                        min_len=input_len,
+                        max_prompt_len=input_len,
+                        max_total_len=input_len+output_len,
+                        skip_min_output_len_check=output_len is not None,
+                    ):
+                        continue
+                    if enable_multimodal_chat:
+                        new_prompt = self.apply_multimodal_chat_transformation(new_prompt, None)
+                    samples.append(
+                        SampleRequest(
+                            prompt=new_prompt,
+                            prompt_len=new_prompt_len,
+                            expected_output_len=new_output_len,
+                            lora_request=lora_request,
+                        )
+                    )
+                    new_prompt_cnt = new_prompt_cnt + 1
+                    if new_prompt_cnt % (num_requests / 10) == 0:
+                        print(f"[{new_prompt_cnt}/{num_requests}] new prompts are created")
+                    new_prompt = ""
+                    new_prompt_len = 0
             else:
-                new_prompt = new_prompt + tokenizer.decode(prompt_ids[:remaining_len])
-                new_prompt_ids = tokenizer(new_prompt).input_ids
-                new_prompt_len = len(new_prompt_ids)
                 if not is_valid_sequence(
-                    new_prompt_len,
+                    prompt_len,
                     new_output_len,
-                    min_len=input_len,
-                    max_prompt_len=input_len,
-                    max_total_len=input_len+output_len,
                     skip_min_output_len_check=output_len is not None,
                 ):
                     continue
                 if enable_multimodal_chat:
-                    new_prompt = self.apply_multimodal_chat_transformation(new_prompt, None)
+                    prompt = self.apply_multimodal_chat_transformation(prompt, None)
                 samples.append(
                     SampleRequest(
-                        prompt=new_prompt,
-                        prompt_len=new_prompt_len,
+                        prompt=prompt,
+                        prompt_len=prompt_len,
                         expected_output_len=new_output_len,
                         lora_request=lora_request,
                     )
                 )
-                new_prompt_cnt = new_prompt_cnt + 1
-                if new_prompt_cnt % (num_requests / 10) == 0:
-                    print(f"[{new_prompt_cnt}/{num_requests}] new prompts are created")
-                new_prompt = ""
-                new_prompt_len = 0
 
         self.maybe_oversample_requests(samples, num_requests)
         return samples
