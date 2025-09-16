@@ -143,6 +143,16 @@ class LoggingStatLogger(StatLoggerBase):
                 "after num_gpu_blocks is: %d", self.engine_index,
                 self.vllm_config.cache_config.num_gpu_blocks)
 
+    def get_last_generation_throughput(self):
+        return self.last_generation_throughput
+
+    def log_cumulative(self, cum_tps: float):
+        log_fn = logger.info
+        if cum_tps == 0.0:
+          log_fn = logger.debug
+
+        log_fn("NODE: Cumulative average generation "
+               "throughput: %.1f tokens/s", cum_tps)
 
 class PrometheusStatLogger(StatLoggerBase):
     _gauge_cls = prometheus_client.Gauge
@@ -682,9 +692,13 @@ class StatLoggerManager:
                                       engine_idx)
 
     def log(self):
+        per_node_throughput = 0.0
         for per_engine_loggers in self.per_engine_logger_dict.values():
             for logger in per_engine_loggers:
                 logger.log()
+                per_node_throughput += logger.get_last_generation_throughput()
+        loggers = self.per_engine_logger_dict[0]
+        loggers[0].log_cumulative(per_node_throughput)
 
     def log_engine_initialized(self):
         self.prometheus_logger.log_engine_initialized()
