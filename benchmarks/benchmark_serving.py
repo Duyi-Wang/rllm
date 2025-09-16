@@ -414,6 +414,12 @@ async def benchmark(
 
     benchmark_duration = time.perf_counter() - benchmark_start_time
 
+    # first itl value can be very incorrect, if multiple # of prefill batch
+    # are executed before first decode batch.
+    # NOTE: ttft is being measured as prefill time, so tpot is miscalculated
+    for output in outputs:
+      output.itl = output.itl[1:]
+
     metrics, actual_output_lens = calculate_metrics(
         input_requests=input_requests,
         outputs=outputs,
@@ -426,30 +432,32 @@ async def benchmark(
 
     print("{s:{c}^{n}}".format(s=" Serving Benchmark Result ", n=50, c="="))
     print("{:<40} {:<10}".format("Successful requests:", metrics.completed))
+    print("{:<40} {:<10}".format("Request concurrency:", max_concurrency))
     print("{:<40} {:<10.2f}".format("Benchmark duration (s):", benchmark_duration))
     print("{:<40} {:<10}".format("Total input tokens:", metrics.total_input))
     print("{:<40} {:<10}".format("Total generated tokens:", metrics.total_output))
-    print(
-        "{:<40} {:<10.2f}".format(
-            "Request throughput (req/s):", metrics.request_throughput
-        )
-    )
-    if goodput_config_dict:
-        print(
-            "{:<40} {:<10.2f}".format(
-                "Request goodput (req/s):", metrics.request_goodput
-            )
-        )
-    print(
-        "{:<40} {:<10.2f}".format(
-            "Output token throughput (tok/s):", metrics.output_throughput
-        )
-    )
-    print(
-        "{:<40} {:<10.2f}".format(
-            "Total Token throughput (tok/s):", metrics.total_token_throughput
-        )
-    )
+# NOTE: Since ttft is not correct, below TPS is not correct, let's use ITL for TPS calc.
+#    print(
+#        "{:<40} {:<10.2f}".format(
+#            "Request throughput (req/s):", metrics.request_throughput
+#        )
+#    )
+#    if goodput_config_dict:
+#        print(
+#            "{:<40} {:<10.2f}".format(
+#                "Request goodput (req/s):", metrics.request_goodput
+#            )
+#        )
+#    print(
+#        "{:<40} {:<10.2f}".format(
+#            "Output token throughput (tok/s):", metrics.output_throughput
+#        )
+#    )
+#    print(
+#        "{:<40} {:<10.2f}".format(
+#            "Total Token throughput (tok/s):", metrics.total_token_throughput
+#        )
+#    )
 
     result = {
         "duration": benchmark_duration,
@@ -484,12 +492,12 @@ async def benchmark(
         if metric_attribute_name not in selected_percentile_metrics:
             return
         print("{s:{c}^{n}}".format(s=metric_header, n=50, c="-"))
-        print(
-            "{:<40} {:<10.2f}".format(
-                f"Mean {metric_name} (ms):",
-                getattr(metrics, f"mean_{metric_attribute_name}_ms"),
-            )
-        )
+#        print(
+#            "{:<40} {:<10.2f}".format(
+#                f"Mean {metric_name} (ms):",
+#                getattr(metrics, f"mean_{metric_attribute_name}_ms"),
+#            )
+#        )
         print(
             "{:<40} {:<10.2f}".format(
                 f"Median {metric_name} (ms):",
@@ -509,6 +517,23 @@ async def benchmark(
             p_word = str(int(p)) if int(p) == p else str(p)
             print("{:<40} {:<10.2f}".format(f"P{p_word} {metric_name} (ms):", value))
             result[f"p{p_word}_{metric_attribute_name}_ms"] = value
+
+        # print output TPS based on mean/median itl
+        if metric_attribute_name in ["itl"]:
+#            print(
+#                "{:<40} {:<10.2f}".format(
+#                    f"Output TPS based on Mean {metric_name}:",
+#                    1 / getattr(metrics, f"mean_{metric_attribute_name}_ms")
+#                    * 1000 * metrics.completed,
+#                )
+#            )
+            print(
+                "{:<40} {:<10.2f}".format(
+                    f"Output TPS based on Median {metric_name}:",
+                    1 / getattr(metrics, f"median_{metric_attribute_name}_ms")
+                    * 1000 * metrics.completed,
+                )
+            )
 
     process_one_metric("ttft", "TTFT", "Time to First Token")
     process_one_metric("tpot", "TPOT", "Time per Output Token (excl. 1st token)")
