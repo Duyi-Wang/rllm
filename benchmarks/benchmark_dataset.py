@@ -432,7 +432,7 @@ class ShareGPTDataset(BenchmarkDataset):
             # Make fixed size len
             if input_len:
                 remaining_len = input_len - new_prompt_len
-                if prompt_len > 2000 or prompt_len < 100:
+                if prompt_len > 2000:
                     continue
                 if remaining_len > prompt_len:
                     new_prompt = new_prompt + ' ' + prompt

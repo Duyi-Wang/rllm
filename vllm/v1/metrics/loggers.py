@@ -152,7 +152,7 @@ class LoggingStatLogger(StatLoggerBase):
         if cum_tps == 0.0:
           log_fn = logger.debug
 
-        log_fn("NODE: Cumulative average generation "
+        log_fn("NODE: Cumulative token generation "
                "throughput: %.1f tokens/s", cum_tps)
 
 class PrometheusStatLogger(StatLoggerBase):
@@ -693,13 +693,16 @@ class StatLoggerManager:
                                       engine_idx)
 
     def log(self):
-        per_node_throughput = 0.0
+        max_gpu_throughput = 0.0
         for per_engine_loggers in self.per_engine_logger_dict.values():
             for logger in per_engine_loggers:
                 logger.log()
-                per_node_throughput += logger.get_last_generation_throughput()
+                max_gpu_throughput = max(max_gpu_throughput,
+                    logger.get_last_generation_throughput())
         loggers = self.per_engine_logger_dict[0]
-        loggers[0].log_cumulative(per_node_throughput)
+        loggers[0].log_cumulative(max_gpu_throughput *
+            len(self.per_engine_logger_dict))
+
 
     def log_engine_initialized(self):
         self.prometheus_logger.log_engine_initialized()

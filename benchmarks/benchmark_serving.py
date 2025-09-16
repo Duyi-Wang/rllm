@@ -492,18 +492,18 @@ async def benchmark(
         if metric_attribute_name not in selected_percentile_metrics:
             return
         print("{s:{c}^{n}}".format(s=metric_header, n=50, c="-"))
-#        print(
-#            "{:<40} {:<10.2f}".format(
-#                f"Mean {metric_name} (ms):",
-#                getattr(metrics, f"mean_{metric_attribute_name}_ms"),
-#            )
-#        )
         print(
             "{:<40} {:<10.2f}".format(
-                f"Median {metric_name} (ms):",
-                getattr(metrics, f"median_{metric_attribute_name}_ms"),
+                f"Mean {metric_name} (ms):",
+                getattr(metrics, f"mean_{metric_attribute_name}_ms"),
             )
         )
+#        print(
+#            "{:<40} {:<10.2f}".format(
+#                f"Median {metric_name} (ms):",
+#                getattr(metrics, f"median_{metric_attribute_name}_ms"),
+#            )
+#        )
         result[f"mean_{metric_attribute_name}_ms"] = getattr(
             metrics, f"mean_{metric_attribute_name}_ms"
         )
@@ -520,20 +520,20 @@ async def benchmark(
 
         # print output TPS based on mean/median itl
         if metric_attribute_name in ["itl"]:
-#            print(
-#                "{:<40} {:<10.2f}".format(
-#                    f"Output TPS based on Mean {metric_name}:",
-#                    1 / getattr(metrics, f"mean_{metric_attribute_name}_ms")
-#                    * 1000 * metrics.completed,
-#                )
-#            )
             print(
                 "{:<40} {:<10.2f}".format(
-                    f"Output TPS based on Median {metric_name}:",
-                    1 / getattr(metrics, f"median_{metric_attribute_name}_ms")
+                    f"Output TPS based on Mean {metric_name}:",
+                    1 / getattr(metrics, f"mean_{metric_attribute_name}_ms")
                     * 1000 * metrics.completed,
                 )
             )
+#            print(
+#                "{:<40} {:<10.2f}".format(
+#                    f"Output TPS based on Median {metric_name}:",
+#                    1 / getattr(metrics, f"median_{metric_attribute_name}_ms")
+#                    * 1000 * metrics.completed,
+#                )
+#            )
 
     process_one_metric("ttft", "TTFT", "Time to First Token")
     process_one_metric("tpot", "TPOT", "Time per Output Token (excl. 1st token)")
