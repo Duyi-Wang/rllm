@@ -5,7 +5,7 @@ mori prepare and finalize module for expert parallelism.
 Migration from DeepEP to mori for AMD GPU support.
 """
 
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 import torch
 
@@ -27,7 +27,7 @@ class MoriPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
 
     def __init__(
         self,
-        handles: List[Any],  # mori EpDispatchCombineOp from MoriAll2AllManager
+        handle: Any,  # mori EpDispatchCombineOp from MoriAll2AllManager
         max_num_tokens: int,
         num_local_experts: int,
         num_dispatchers: int,
@@ -37,7 +37,7 @@ class MoriPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         Initialize MoriPrepareAndFinalize.
 
         Args:
-            handles: mori EpDispatchCombineOp instances from All2AllManager
+            handle: mori EpDispatchCombineOp instance from All2AllManager
             max_num_tokens: Maximum number of tokens per rank
             num_local_experts: Number of experts on this rank
             num_dispatchers: Number of dispatcher ranks (world size)
@@ -47,7 +47,7 @@ class MoriPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
         assert max_num_tokens > 0
         assert num_local_experts > 0
 
-        self.handles = handles  # mori EpDispatchCombineOp
+        self.handle = handle  # mori EpDispatchCombineOp
         self.max_num_tokens = max_num_tokens
         self.num_local_experts = num_local_experts
         self.num_dispatchers_ = num_dispatchers
@@ -104,7 +104,6 @@ class MoriPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             # Pre-dispatch quantization to reduce communication overhead
             dispatch_input = a1
             scales = None
-            ubatch_id = 0 if extra_prepare_args is None else extra_prepare_args.get("ubatch_id", 0)
 
             if self.use_fp8_dispatch:
                 from aiter import get_hip_quant
@@ -133,7 +132,7 @@ class MoriPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
                 dispatch_scales,
                 dispatch_indices,
                 dispatch_recv_num_token,
-            ) = self.handles[ubatch_id].dispatch(
+            ) = self.handle.dispatch(
                 input=dispatch_input,
                 weights=topk_weights,
                 scales=scales,
@@ -144,7 +143,6 @@ class MoriPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
                 expert_num_tokens=dispatch_recv_num_token,
                 expert_num_tokens_cpu=None,
             )
-
 
             return (
                 dispatch_output,
@@ -177,13 +175,12 @@ class MoriPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
             topk_weights: Original top-k weights
             topk_ids: Original top-k indices
         """
-        assert self.handles is not None
+        assert self.handle is not None
 
         num_original_tokens = output.size(0)  # Original number of tokens
-        ubatch_id = 0 if extra_finalize_args is None else extra_finalize_args.get("ubatch_id", 0)
 
         try:
-            combined_output, combined_weights = self.handles[ubatch_id].combine(
+            combined_output, combined_weights = self.handle.combine(
                 input=fused_expert_output,
                 weights=topk_weights,
                 indices=topk_ids,

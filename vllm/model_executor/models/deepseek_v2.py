@@ -60,13 +60,6 @@ from .utils import (PPMissingLayer, is_pp_missing_parameter,
                     make_empty_intermediate_tensors_factory, make_layers,
                     maybe_prefix)
 
-from vllm.v1.worker.ubatching import ubatch_context_exists
-from vllm.v1.worker.tbo_fwd import model_forward_maybe_tbo
-from vllm.utils import current_stream
-
-from vllm.logger import init_logger
-
-logger = init_logger(__name__)
 
 class DeepseekV2MLP(nn.Module):
 
@@ -216,145 +209,6 @@ class DeepseekV2MoE(nn.Module):
 
         return final_hidden_states.view(num_tokens, hidden_dim)
 
-    def op_enter_moe(self, state):
-        # coded verbosely
-        hidden_states = state.pop("hidden_states_attn_output")
-        num_tokens, hidden_dim = hidden_states.shape
-        internal_hidden_states = hidden_states.view(-1, hidden_dim)
-        state.hidden_states_mlp_input = internal_hidden_states
-        state.hidden_states_dtype = internal_hidden_states.dtype
-        state.num_tokens = num_tokens
-        state.hidden_dim = hidden_dim
-
-    def op_gate(self, state):
-        # router_logits: (num_tokens, n_experts)
-        router_logits, _ = self.gate(state.hidden_states_mlp_input)
-        state.router_logits = router_logits
-
-    def op_select_experts(self, state):
-        experts = self.experts
-        topk_weights, topk_ids = FusedMoE.select_experts(
-            hidden_states=state.hidden_states_mlp_input,
-            router_logits=state.pop("router_logits"),
-            use_grouped_topk=True,
-            top_k=experts.top_k,
-            renormalize=experts.renormalize,
-            topk_group=experts.topk_group,
-            num_expert_group=experts.num_expert_group,
-            custom_routing_function=experts.custom_routing_function,
-            scoring_func=experts.scoring_func,
-            e_score_correction_bias=experts.e_score_correction_bias,
-            indices_type=experts.quant_method.topk_indices_dtype,
-            enable_eplb=experts.enable_eplb,
-            expert_map=experts.expert_map,
-            expert_load_view=experts.expert_load_view,
-            logical_to_physical_map=experts.logical_to_physical_map,
-            logical_replica_count=experts.logical_replica_count,
-        )
-        # requires router_logits from dispatch result
-        state.topk_weights = topk_weights
-        state.topk_ids = topk_ids
-
-    def op_dispatch(self, state):
-        # switch to comm stream and make sure previous compute is done before progressing
-        state.ubatch_ctx.record_compute_event()
-        state.ubatch_ctx.maybe_run_hook()
-
-        hidden_states = state.hidden_states_mlp_input
-        topk_weights = state.pop("topk_weights")
-        topk_ids = state.pop("topk_ids")
-        ubatch_id = state.ubatch_ctx.id
-
-        (a1q, a1q_scale, expert_tokens_meta, new_topk_ids,
-         new_topk_weights)= self.experts.dispatch_dbo(
-            a1=hidden_states,
-            topk_ids=topk_ids,
-            topk_weights=topk_weights,
-            ubatch_id=ubatch_id
-        )
-
-        state.a1q = a1q
-        state.a1q_scale = a1q_scale
-        state.expert_tokens_meta = expert_tokens_meta
-        state.topk_weights = new_topk_weights
-        state.topk_ids = new_topk_ids
-
-        state.ubatch_ctx.record_comm_event()
-
-    def op_shared_experts(self, state):
-        if self.n_shared_experts is not None:
-            state.shared_output = self.shared_experts(
-                x=state.hidden_states_mlp_input,
-            )
-        else:
-            state.shared_output = None
-
-    def op_experts(self, state):
-        a1 = state.hidden_states_mlp_input
-        a1q = state.pop("a1q")
-        a1q_scale = state.pop("a1q_scale")
-        topk_ids = state.topk_ids
-        topk_weights = state.topk_weights
-        expert_tokens_meta = state.pop("expert_tokens_meta")
-        ubatch_id = state.ubatch_ctx.id
-
-        fused_experts_output = self.experts.fused_experts_dbo(
-            a1=a1,
-            a1q=a1q,
-            a1q_scale=a1q_scale, 
-            topk_ids=topk_ids,
-            topk_weights=topk_weights,
-            expert_tokens_meta=expert_tokens_meta,
-            ubatch_id=ubatch_id
-        )
-        state.fused_experts_output = fused_experts_output
-
-    def op_combine(self, state):
-        # switch to comm stream and make sure previous compute is done before progressing
-        state.ubatch_ctx.record_compute_event()
-        state.ubatch_ctx.maybe_run_hook()
-
-        input_hidden_states = state.pop("hidden_states_mlp_input")
-        fused_experts_output = state.pop("fused_experts_output")
-        topk_ids = state.pop("topk_ids")
-        topk_weights = state.pop("topk_weights")
-        ubatch_id = state.ubatch_ctx.id
-
-        state.hidden_states_after_combine = self.experts.combine_dbo(
-          input_hidden_states, fused_experts_output, topk_weights, topk_ids,
-          ubatch_id
-        )
-        state.ubatch_ctx.record_comm_event()
-
-    def op_moe_finalize_and_exit(self, state):
-        shared_output = state.pop("shared_output")
-        select_output = state.pop("hidden_states_after_combine")
-        num_tokens = state.pop("num_tokens")
-        hidden_dim = state.pop("hidden_dim")
-        hidden_states_dtype = state.pop("hidden_states_dtype")
-
-        hidden_states = select_output * shared_output
-
-        if hidden_states_dtype != torch.float16:
-            hidden_states = select_output * self.routed_scaling_factor
-        else:
-            hidden_states = select_output
-
-        if shared_output is not None:
-            if hidden_states_dtype != torch.float16:
-                hidden_states = hidden_states + shared_output
-            else:
-                # Fix FP16 overflow
-                # See DeepseekV2DecoderLayer for more details.
-                hidden_states = hidden_states + shared_output \
-                    * (1. / self.routed_scaling_factor)
-
-        if self.tp_size > 1:
-            hidden_states = (
-                self.experts.maybe_all_reduce_tensor_model_parallel(
-                    hidden_states))
-
-        state.hidden_states_mlp_output = hidden_states.view(num_tokens, hidden_dim)
 
 def yarn_get_mscale(scale: float = 1, mscale: float = 1) -> float:
     import math
@@ -732,7 +586,6 @@ class DeepseekV2DecoderLayer(nn.Module):
                 prefix=f"{prefix}.mlp",
                 enable_eplb=enable_eplb,
             )
-            self.is_layer_sparse = True
         else:
             self.mlp = DeepseekV2MLP(
                 hidden_size=config.hidden_size,
@@ -741,7 +594,6 @@ class DeepseekV2DecoderLayer(nn.Module):
                 quant_config=quant_config,
                 prefix=f"{prefix}.mlp",
             )
-            self.is_layer_sparse = False
         self.input_layernorm = RMSNorm(config.hidden_size,
                                        eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(config.hidden_size,
@@ -792,118 +644,6 @@ class DeepseekV2DecoderLayer(nn.Module):
 
         return hidden_states, residual
 
-# FIXME : if not required, remove op_forward
-    def op_forward(
-        self,
-        state,
-        positions: torch.Tensor,
-        hidden_states: torch.Tensor,
-        residual: Optional[torch.Tensor],
-    ) -> torch.Tensor:
-        # Self Attention
-        if residual is None:
-            residual = hidden_states
-            hidden_states = self.input_layernorm(hidden_states)
-        else:
-            hidden_states, residual = self.input_layernorm(
-                hidden_states, residual)
-        hidden_states = self.self_attn(
-            positions=positions,
-            hidden_states=hidden_states,
-        )
-
-        if hidden_states.dtype == torch.float16:
-            # Fix FP16 overflow
-            # We scale both hidden_states and residual before
-            # rmsnorm, and rmsnorm result would not affect by scale.
-            hidden_states *= 1. / self.routed_scaling_factor
-            if self.layer_idx == 0:
-                # The residual is shared by all layers, we only scale it on
-                # first layer.
-                residual *= 1. / self.routed_scaling_factor
-
-        # Fully Connected
-        hidden_states, residual = self.post_attention_layernorm(
-            hidden_states, residual)
-        hidden_states = self.mlp(hidden_states)
-
-        if isinstance(self.mlp,
-                      DeepseekV2MLP) and hidden_states.dtype == torch.float16:
-            # Fix FP16 overflow
-            # Scaling the DeepseekV2MLP output, it is the input of
-            # input_layernorm of next decoder layer.
-            # The scaling of DeepseekV2MOE output would be done in the forward
-            # of DeepseekV2MOE
-            hidden_states *= 1. / self.routed_scaling_factor
-
-        output=(
-            dict(
-                positions=positions,
-                hidden_states=hidden_states,
-                residual=residual,
-            )
-        )
-        return output
-
-    def op_forward_pre_mlp(
-        self,
-        state,
-        positions: torch.Tensor,
-        hidden_states: torch.Tensor,
-        residual: Optional[torch.Tensor],
-    ):
-        if residual is None:
-            residual = hidden_states
-            hidden_states = self.input_layernorm(hidden_states)
-        else:
-            hidden_states, residual = self.input_layernorm(
-                hidden_states, residual)
-        hidden_states = self.self_attn(
-            positions=positions,
-            hidden_states=hidden_states,
-        )
-
-        if hidden_states.dtype == torch.float16:
-            # Fix FP16 overflow
-            # We scale both hidden_states and residual before
-            # rmsnorm, and rmsnorm result would not affect by scale.
-            hidden_states *= 1. / self.routed_scaling_factor
-            if self.layer_idx == 0:
-                # The residual is shared by all layers, we only scale it on
-                # first layer.
-                residual *= 1. / self.routed_scaling_factor
-
-        # Fully Connected
-        state.hidden_states_attn_output, state.residual = self.post_attention_layernorm(
-            hidden_states, residual)
-
-        state.update(
-            dict(
-                positions=positions,
-            )
-        )
-
-    def op_forward_post_mlp(self, state):
-        # actually no need below
-        hidden_states = state.pop("hidden_states_mlp_output")
-        if isinstance(self.mlp,
-                      DeepseekV2MLP) and hidden_states.dtype == torch.float16:
-            # Fix FP16 overflow
-            # Scaling the DeepseekV2MLP output, it is the input of
-            # input_layernorm of next decoder layer.
-            # The scaling of DeepseekV2MOE output would be done in the forward
-            # of DeepseekV2MOE
-            hidden_states *= 1. / self.routed_scaling_factor
-
-        # all state element are popped, except ubatch_ctx
-        output = dict(
-            positions = state.pop("positions"),
-            hidden_states = hidden_states,
-            residual = state.pop("residual"),
-        )
-        # do not clear state.ubatch_ctx
-
-        return output
 
 @support_torch_compile
 class DeepseekV2Model(nn.Module):
@@ -972,27 +712,8 @@ class DeepseekV2Model(nn.Module):
             hidden_states = intermediate_tensors["hidden_states"]
             residual = intermediate_tensors["residual"]
 
-        # if tbo is enabled, ubatch context must exist
-        normal_num_layers = (
-            self.config.first_k_dense_replace
-            if ubatch_context_exists()
-            else len(self.layers)
-        )
-
-        if normal_num_layers != len(self.layers):
-            for i in range(normal_num_layers):
-                layer = self.layers[i]
-                hidden_states, residual = layer(
-                    positions, hidden_states, residual)
-            hidden_states, residual = model_forward_maybe_tbo(
-                layers=self.layers[normal_num_layers:],
-                positions=positions,
-                hidden_states=hidden_states,
-                residual=residual,
-            )
-        else: #non-tbo
-            for layer in self.layers[self.start_layer:self.end_layer]:
-                hidden_states, residual = layer(positions, hidden_states, residual)
+        for layer in self.layers[self.start_layer:self.end_layer]:
+            hidden_states, residual = layer(positions, hidden_states, residual)
 
         if not get_pp_group().is_last_rank:
             return IntermediateTensors({
