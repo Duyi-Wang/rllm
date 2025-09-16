@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from enum import Enum
 from typing import Callable, Literal, Optional, overload
 
+import os
 import torch
 import torch.nn.functional as F
 from torch.nn.parameter import UninitializedParameter
@@ -1391,6 +1392,11 @@ class FusedMoE(torch.nn.Module):
                                           src=src.to(expert_load_view))
 
             topk_ids = topk_ids.to(dtype=indices_type)
+        elif os.environ.get('VLLM_BALANCED_TOPK_IDS', '0') != '0':
+            logger.debug("Set balanced topk ids")
+            temp = torch.arange(topk_ids.shape[0], device=topk_ids.device, dtype=indices_type) % 256 # self.config.n_routed_experts
+            temp = temp.view(-1 , 1)# .contiguous().to(topk_ids.device)
+            topk_ids = temp.expand_as(topk_ids).contiguous()
 
         assert topk_ids.dtype == indices_type or indices_type is None
 
