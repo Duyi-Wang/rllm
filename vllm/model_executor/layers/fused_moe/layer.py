@@ -36,6 +36,7 @@ from vllm.platforms.interface import CpuArchEnum
 from vllm.utils import (direct_register_custom_op, has_deep_ep, has_mori,
                         has_pplx, round_up)
 from vllm.utils.flashinfer import has_flashinfer
+from vllm.v1.worker.ubatching import ubatch_context_exists
 
 if current_platform.is_cuda_alike():
     from .fused_batched_moe import BatchedTritonExperts
@@ -206,10 +207,17 @@ class FusedMoEMethodBase(QuantizeMethodBase):
                 scale_dim=scale_shape[-1],
                 scale_type_size=scale_type_size,
             )
-            handle = all2all_manager.get_handle(all_to_all_args)
+
+            vllm_config = get_current_vllm_config()
+            num_handles = 2 if vllm_config.parallel_config.enable_microbatching else 1
+
+            handles = []
+            for ubatch_id in range(num_handles):
+                handles.append(all2all_manager.get_handle({**all_to_all_args, 'ubatch_id':
+                      ubatch_id}))
 
             prepare_finalize = MoriPrepareAndFinalize(
-                handle,
+                handles,
                 max_num_tokens=moe.max_num_tokens,
                 num_local_experts=moe.num_local_experts,
                 num_dispatchers=all2all_manager.world_size,
@@ -1509,6 +1517,79 @@ class FusedMoE(torch.nn.Module):
 
         return full_final_hidden_states
 
+
+    def dispatch_dbo(self, a1, topk_ids, topk_weights, ubatch_id):
+
+        assert self.quant_method is not None
+        fused_experts = self.quant_method.fused_experts
+
+        (a1q, a1q_scale, expert_tokens_meta, _expert_topk_ids,
+         _expert_topk_weights) = fused_experts.prepare_finalize.prepare(
+             a1=a1,
+             a1_scale=self.w13_input_scale,
+             a2_scale=self.w2_input_scale,
+             topk_weights=topk_weights,
+             topk_ids=topk_ids,
+             num_experts=self.global_num_experts,
+             expert_map=self.expert_map,
+             apply_router_weight_on_input=self.apply_router_weight_on_input,
+             quant_config=fused_experts.fused_experts.quant_config,
+             extra_prepare_args={'ubatch_id': ubatch_id},
+         )
+
+        # Maybe prepare gathered topk_ids and topk_weights from other EP ranks.
+        topk_ids = topk_ids if _expert_topk_ids is None else _expert_topk_ids
+        topk_weights = (topk_weights if _expert_topk_weights is None else
+                        _expert_topk_weights)
+        return a1q, a1q_scale, expert_tokens_meta, topk_ids, topk_weights
+
+    def fused_experts_dbo(self, a1, a1q, a1q_scale, topk_weights, topk_ids,
+                          expert_tokens_meta, ubatch_id):
+        fused_experts = self.quant_method.fused_experts
+        w1_scale = (self.w13_weight_scale_inv
+                    if self.quant_method.block_quant
+                    else self.w13_weight_scale)
+        w2_scale = (self.w2_weight_scale_inv
+                    if self.quant_method.block_quant
+                    else self.w2_weight_scale)
+
+        fused_experts_output = fused_experts._maybe_chunk_fused_experts(
+            a1=a1,
+            a1q=a1q,
+            w1=self.w13_weight,
+            w2=self.w2_weight,
+            topk_weights=topk_weights,
+            topk_ids=topk_ids,
+            activation=self.activation,
+            global_num_experts=self.global_num_experts,
+            local_num_experts=self.local_num_experts,
+            expert_map=self.expert_map,
+            w1_scale=w1_scale,
+            w2_scale=w2_scale,
+            w1_zp=None,
+            w2_zp=None,
+            a1q_scale=a1q_scale,
+            a2_scale=self.w2_input_scale,
+            expert_tokens_meta=expert_tokens_meta,
+            apply_router_weight_on_input=self.apply_router_weight_on_input,
+            extra_expert_args=None)
+
+        return fused_experts_output
+
+    def combine_dbo(self, input_hidden_states, fused_experts_output, topk_weights,
+        topk_ids, ubatch_id):
+        fused_experts = self.quant_method.fused_experts
+        output = torch.zeros_like(input_hidden_states)
+        extra_finalize_args = {'ubatch_id': ubatch_id}
+
+        fused_experts.prepare_finalize.finalize(
+            output, fused_experts_output, topk_weights, topk_ids,
+            self.apply_router_weight_on_input,
+            fused_experts.fused_experts.finalize_weight_and_reduce_impl(),
+            extra_finalize_args)
+
+        return output
+
     def forward_impl(self, hidden_states: torch.Tensor,
                      router_logits: torch.Tensor):
         assert self.quant_method is not None
@@ -1517,9 +1598,11 @@ class FusedMoE(torch.nn.Module):
         use_flashinfer_cutlass_kernels = (
             self.dp_size > 1
             and self.moe_parallel_config.use_flashinfer_cutlass_kernels)
+        forward_context = get_forward_context()
+        in_ubatching = ubatch_context_exists()
         if (self.moe_parallel_config.use_pplx_kernels
                 or self.moe_parallel_config.use_deepep_ll_kernels
-                or self.moe_parallel_config.use_mori_kernels
+                or (self.moe_parallel_config.use_mori_kernels and not in_ubatching)
                 or use_flashinfer_cutlass_kernels):
             return self.forward_impl_chunked(hidden_states, router_logits)
 

@@ -64,8 +64,8 @@ class NaiveAll2AllManager(All2AllManagerBase):
         ).dp_metadata.cu_tokens_across_dp_cpu
         start = 0 if self.dp_rank == 0 else cu_tokens_across_dp_cpu[
             self.dp_rank - 1]
-        end = cu_tokens_across_dp_cpu[self.dp_rank]
 
+        end = cu_tokens_across_dp_cpu[self.dp_rank]
         all_hidden_states = self.dp_group.all_reduce(hidden_states)
         hidden_states = all_hidden_states[start:end, :]
         return hidden_states
@@ -401,6 +401,7 @@ class MoriAll2AllManager(All2AllManagerBase):
         data_type = kwargs.get('data_type', torch.bfloat16)
         scale_dim = kwargs.get('scale_dim')
         scale_type_size = kwargs.get('scale_type_size')
+        ubatch_id = kwargs.get('ubatch_id')
 
         # Validate required parameters
         if any(param is None for param in [max_num_tokens, num_local_experts,
@@ -409,7 +410,7 @@ class MoriAll2AllManager(All2AllManagerBase):
 
         # Create cache key
         cache_key = (max_num_tokens, num_local_experts, experts_per_token,
-                    hidden_dim, data_type)
+                    hidden_dim, data_type, ubatch_id)
 
         # Check cache first
         if cache_key in self._op_handles:

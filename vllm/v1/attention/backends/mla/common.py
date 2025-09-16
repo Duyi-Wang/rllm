@@ -569,26 +569,37 @@ class MLACommonMetadataBuilder(AttentionMetadataBuilder[M]):
             block_table=block_table_tensor,
             seq_lens=seq_lens,
         )
-
-    def build_for_cudagraph_capture(
-            self, common_attn_metadata: CommonAttentionMetadata) -> M:
+# NOTE : below function is not used? this function was build_for_cudagraph_capture
+    def _split_decodes_and_prefills(self, max_query_len: int, num_reqs: int,
+                                    num_tokens: int,
+                                    query_start_loc: torch.Tensor):
         """
-        This method builds the metadata for full cudagraph capture.
-        Currently, only decode is supported for full cudagraphs with MLA.
+        return
+        - num_decodes: number of decode requests
+        - num_prefills: number of prefill requests
+        - num_decode_tokens: number of decode tokens
+        - num_prefill_tokens: number of prefill tokens
         """
-        m = common_attn_metadata
-        assert m.num_reqs == m.num_actual_tokens, \
-            "MLA only supports decode-only full CUDAGraph capture. " \
-            "Make sure all cudagraph capture sizes <= max_num_seq."
+        if max_query_len == 1:
+            # Pure decode
+            return num_reqs, 0, num_tokens, 0
+        else:
+            query_lens = query_start_loc[1:] - query_start_loc[:-1]
+            first_prefill = (query_lens > 1).int().argmax(dim=-1).item()
+            assert torch.all(query_lens[first_prefill:] > 1)
+            num_decodes = first_prefill
+            num_prefills = num_reqs - num_decodes
+            num_decode_tokens = first_prefill
+            num_prefill_tokens = num_tokens - query_start_loc[first_prefill]
+            return (num_decodes, num_prefills, num_decode_tokens,
+                    num_prefill_tokens)
 
-        m.max_query_len = 1  # decode-only
-
-        return self.build(0, m)
-
+# NOTE : ubatch_id is not really used... yet
     def build(self,
               common_prefix_len: int,
               common_attn_metadata: CommonAttentionMetadata,
-              fast_build: bool = False) -> M:
+              fast_build: bool = False,
+              ubatch_id: Optional[int] = None) -> M:
         num_reqs = common_attn_metadata.num_reqs
         num_tokens = common_attn_metadata.num_actual_tokens
         max_query_len = common_attn_metadata.max_query_len

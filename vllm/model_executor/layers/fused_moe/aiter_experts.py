@@ -11,7 +11,9 @@ from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
 from vllm.model_executor.layers.fused_moe.rocm_aiter_fused_moe import (
     rocm_aiter_fused_experts,
 )
+from vllm.logger import init_logger
 
+logger = init_logger(__name__)
 
 class AiterExperts(mk.FusedMoEPermuteExpertsUnpermute):
     """
@@ -127,7 +129,9 @@ class AiterExperts(mk.FusedMoEPermuteExpertsUnpermute):
         Process expert computation using Aiter kernels.
         Works with pre-dispatched tokens from Mori all2all.
         """
-        expert_num_tokens = expert_tokens_meta.expert_num_tokens
+        expert_num_tokens = None
+        if expert_tokens_meta is not None:
+            expert_num_tokens = expert_tokens_meta.expert_num_tokens
         # Call Aiter fused MoE expert processing
         result = rocm_aiter_fused_experts(
             hidden_states=hidden_states,
@@ -145,7 +149,7 @@ class AiterExperts(mk.FusedMoEPermuteExpertsUnpermute):
             a2_scale=a2_scale,
             block_shape=self.block_shape,
             expert_map=expert_map,
-            expert_num_tokens=expert_tokens_meta.expert_num_tokens,
+            expert_num_tokens=expert_num_tokens,
             output_dtype=output.dtype,
         )
 

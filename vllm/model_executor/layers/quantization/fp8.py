@@ -970,7 +970,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                 logical_replica_count=logical_replica_count,
             )
 
-        if self.moe.use_mori_kernels:
+        if layer.moe_config.use_mori_kernels:
             common_kwargs = dict(
                 hidden_states=x,
                 w1=layer.w13_weight,
