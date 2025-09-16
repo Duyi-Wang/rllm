@@ -141,7 +141,7 @@ class MoRIIOWrapper():
         #     self.remote_memory_metadata, remote_offset, 
         #     transfer_size_byte,
         #     self.moriio_engine.allocate_transfer_uid())
-        transfer_status = self.sessiones[sess_idx].read(
+        transfer_status = self.sessiones[sess_idx].batch_read(
              local_offset, 
              remote_offset, 
             transfer_size_byte,
@@ -1439,6 +1439,9 @@ class MoRIIOConnectorWorker:
                 self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_name][0])
                 self.moriio_wrapper.build_session()
             self.builded_session=True
+            import time
+            print("sleeping")
+            time.sleep(20)
         layername0 = list(self.layer_name_to_local_kv_cache_metadata.keys())[0]
         # logger.info(f"tensor:{layername0}:::{self.kv_caches[layername0].sum() = }")
         # self.kv_caches
@@ -1454,6 +1457,9 @@ class MoRIIOConnectorWorker:
             # 在local_block_ids这个序列中,判断一下那些是连续的
             # for start,end in zip(contiguous_ids[])
             #todo make batch_read
+            offset_local=[]
+            offset_remote=[]
+            transfer_sizes=[]
             for idx,local_blkid in enumerate(local_block_ids):
                 offset_k_local = self.kv_caches[layer_name].element_size() * (0 * stride[0] + local_blkid * stride[1])
                 offset_v_local = self.kv_caches[layer_name].element_size() * (1 * stride[0] + local_blkid * stride[1])
@@ -1461,8 +1467,23 @@ class MoRIIOConnectorWorker:
                 offset_v_remote = self.kv_caches[layer_name].element_size() * (1 * stride[0] + remote_block_ids[idx] * stride[1])
                 transfer_size_byte = blksize * hn * hs * self.kv_caches[layer_name].element_size()
                 # logger.info(f"zovlog:===========>{self.kv_cache_shape = },{layer_name = },{offset_k = },{offset_v = },{transfer_size_byte = },{blkid = },{stride = }")
-                self.moriio_wrapper.read_remote_data(transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
-                self.moriio_wrapper.read_remote_data(transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
+                
+                
+                offset_local.append(offset_v_local)
+                offset_remote.append(offset_v_remote)
+                transfer_sizes.append(transfer_size_byte)
+
+            
+                offset_local.append(offset_k_local)
+                offset_remote.append(offset_k_remote)
+                transfer_sizes.append(transfer_size_byte)
+
+
+                
+                
+                # self.moriio_wrapper.read_remote_data(transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
+                # self.moriio_wrapper.read_remote_data(transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
+            self.moriio_wrapper.read_remote_data(transfer_sizes,offset_local, offset_remote,sess_idx)
             sess_idx+=1
         self.moriio_wrapper.waiting_for_read_complete()
         
