@@ -28,7 +28,6 @@ export    NCCL_IB_DISABLE=0
     --max-num-batched-tokens 6144 \
     --host 0.0.0.0 \
     --port 20005 \
-    --enforce-eager \
     --trust-remote-code \
     --gpu-memory-utilization 0.6 \
     --disable-log-request \

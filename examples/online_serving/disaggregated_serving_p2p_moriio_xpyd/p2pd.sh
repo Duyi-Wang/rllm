@@ -26,7 +26,6 @@ VLLM_USE_V1=1 VLLM_ROCM_USE_AITER=1 VLLM_ENABLE_DSV3=0  SAFETENSORS_FAST_GPU=1  
         --host 0.0.0.0 \
         --port 40005 \
         --trust-remote-code \
-        --enforce-eager \
         --gpu-memory-utilization 0.6 \
         --disable-log-request \
         --served-model-name deepseek-ai/DeepSeek-R1 \

@@ -4,20 +4,21 @@ set -ex
 # export NCCL_SOCKET_IFNAME=ens50f0
 export GLOO_SOCKET_IFNAME=ens14np0
 export NCCL_SOCKET_IFNAME=ens14np0
-export CUDA_VISIBLE_DEVICES=7
-export HIP_VISIBLE_DEVICES=7
+export CUDA_VISIBLE_DEVICES=6,7
+export HIP_VISIBLE_DEVICES=6,7
 export VLLM_USE_V1=1 
 export VLLM_ROCM_USE_AITER=1 
 export VLLM_ENABLE_DSV3=0  
 export SAFETENSORS_FAST_GPU=1   
 
-vllm serve /nfs/data/Qwen3-0.6B \
-        -tp 1   \
+vllm serve /nfs/data/Qwen3-32B \
+        -tp 2  \
     --block-size 16 \
     --max_seq_len_to_capture 6144 \
     --max-num-batched-tokens 6144 \
     --host 0.0.0.0 \
-    --port 40015 \
+    --port 10001 \
+    --enforce-eager \
     --trust-remote-code \
     --gpu-memory-utilization 0.5 \
     --disable-log-request \

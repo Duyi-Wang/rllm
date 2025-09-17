@@ -1,13 +1,13 @@
-ISL=3000
+ISL=4096
 #1000有问题,300没问题
-OSL=1000
+OSL=20
 RATIO=0
 PORT=10001
 # PORT=40015
 
-CONCURRENCY=32  # "8 16 32 64 128"
-PROMPTS=128
-      python3 /opt/vllm/benchmarks/benchmark_serving.py  \
+CONCURRENCY=1 # "8 16 32 64 128"
+PROMPTS=1
+      vllm bench serve  \
         --dataset-name random \
         --model  deepseek-ai/DeepSeek-R1 \
         --random-input-len $ISL \
