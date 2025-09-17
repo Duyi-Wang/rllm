@@ -1529,7 +1529,7 @@ class MoRIIOConnectorWorker:
         _,blknum,blksize,hn,hs = self.kv_cache_shape
         # stride = [blknum*blksize*hn*hs   ,blksize*hs*hn   ,hs*hn   ,hs   ,1]
         sess_idx=0
-        use_batch=False
+        use_batch=True
         for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
             # logger.error(f"zovlog:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
             stride = self.kv_caches[layer_name].stride()
@@ -1567,15 +1567,17 @@ class MoRIIOConnectorWorker:
                      # self.moriio_wrapper.read_remote_data_s(transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
                     # self.moriio_wrapper.read_remote_data_s(transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
                     print("!!!!",transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
-                    print("!!!!",transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
+                    print("!!!!",transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
             a,b,c=self.merge_contiguous_blocks(offset_local,offset_remote,transfer_sizes)
             
             if use_batch:
-                self.moriio_wrapper.read_remote_data(transfer_sizes,offset_local, offset_remote,sess_idx)
+                # self.moriio_wrapper.read_remote_data(transfer_sizes,offset_local, offset_remote,sess_idx)
+                self.moriio_wrapper.read_remote_data(c,a, b,sess_idx)
+
             else:
                 for rang_idx in range(len(a)):
-                    print("bbbb",a[rang_idx],b[rang_idx],c[rang_idx])
-                    self.moriio_wrapper.read_remote_data_s(a[rang_idx],b[rang_idx],c[rang_idx])
+                    print("bbbb",c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
+                    self.moriio_wrapper.read_remote_data_s(c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
             sess_idx+=1
         
         self.moriio_wrapper.waiting_for_read_complete()
