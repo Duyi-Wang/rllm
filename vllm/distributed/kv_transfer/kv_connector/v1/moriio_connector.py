@@ -149,12 +149,30 @@ class MoRIIOWrapper():
         # while transfer_status.Code() == StatusCode.INIT:
         #     pass
         self.transfer_status.append(transfer_status)
+    def read_remote_data_s(self,transfer_size_byte,local_offset = 0,remote_offset = 0, sess_idx=0):
+        assert self.remote_memory_metadata is not None,"You have not register remote memory data!"
+        assert self.local_memory_registered,"You have not register local memory data!"
+        # assert self.remote_engine_ip is not None
+        # assert self.remote_engine_port is not None
+        # transfer_status = self.moriio_engine.read(
+        #     self.local_memory_metadata, local_offset, 
+        #     self.remote_memory_metadata, remote_offset, 
+        #     transfer_size_byte,
+        #     self.moriio_engine.allocate_transfer_uid())
+        transfer_status = self.sessiones[sess_idx].read(
+             local_offset, 
+             remote_offset, 
+            transfer_size_byte,
+            self.moriio_engine.allocate_transfer_uid())
+        # while transfer_status.Code() == StatusCode.INIT:
+        #     pass
+        self.transfer_status.append(transfer_status)
 
     def waiting_for_read_complete(self):
         while self.transfer_status:
             status = self.transfer_status.pop(0)
-            while status.Code() == StatusCode.INIT:
-                pass
+            status.Wait()
+            
 
     def async_wait_D_finish_reqid(self):
         # 仅P节点执行
@@ -1417,6 +1435,68 @@ class MoRIIOConnectorWorker:
             local_block_ids=meta.local_block_ids,
             remote_block_ids=meta.remote_block_ids,
         )
+    
+    
+    
+    
+    
+    def merge_contiguous_blocks(self, offsets_local, offsets_remote, sizes):
+        """
+        合并连续的存储区块
+        """
+        if not offsets_local:
+            return [], [], []
+        
+        # 首先确保所有列表长度相同
+        assert len(offsets_local) == len(offsets_remote) == len(sizes)
+        
+        # 按本地偏移量排序，同时保持关联关系
+        sorted_indices = sorted(range(len(offsets_local)), key=lambda i: offsets_local[i])
+        sorted_local = [offsets_local[i] for i in sorted_indices]
+        sorted_remote = [offsets_remote[i] for i in sorted_indices]
+        sorted_sizes = [sizes[i] for i in sorted_indices]
+        
+        merged_local = []
+        merged_remote = [] 
+        merged_sizes = []
+        
+        # 初始化第一个区间
+        current_local_start = sorted_local[0]
+        current_remote_start = sorted_remote[0]
+        current_size = sorted_sizes[0]
+        current_end = current_local_start + current_size
+        
+        for i in range(1, len(sorted_local)):
+            local_offset = sorted_local[i]
+            remote_offset = sorted_remote[i]
+            size = sorted_sizes[i]
+            
+            # 检查是否连续（本地和远程都连续）
+            is_contiguous = (local_offset == current_end and 
+                            remote_offset == current_remote_start + current_size)
+            
+            if is_contiguous:
+                # 扩展当前区间
+                current_size += size
+                current_end = local_offset + size
+            else:
+                # 保存当前区间
+                merged_local.append(current_local_start)
+                merged_remote.append(current_remote_start)
+                merged_sizes.append(current_size)
+                
+                # 开始新区间
+                current_local_start = local_offset
+                current_remote_start = remote_offset
+                current_size = size
+                current_end = local_offset + size
+        
+        # 添加最后一个区间
+        merged_local.append(current_local_start)
+        merged_remote.append(current_remote_start)
+        merged_sizes.append(current_size)
+    
+        return merged_local, merged_remote, merged_sizes
 
     def _read_blocks(self, 
                      local_block_ids: list[int],
@@ -1440,8 +1520,8 @@ class MoRIIOConnectorWorker:
                 self.moriio_wrapper.build_session()
             self.builded_session=True
             import time
-            print("sleeping")
-            time.sleep(20)
+            # print("sleeping")
+            # time.sleep(20)
         layername0 = list(self.layer_name_to_local_kv_cache_metadata.keys())[0]
         # logger.info(f"tensor:{layername0}:::{self.kv_caches[layername0].sum() = }")
         # self.kv_caches
@@ -1449,6 +1529,7 @@ class MoRIIOConnectorWorker:
         _,blknum,blksize,hn,hs = self.kv_cache_shape
         # stride = [blknum*blksize*hn*hs   ,blksize*hs*hn   ,hs*hn   ,hs   ,1]
         sess_idx=0
+        use_batch=False
         for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
             # logger.error(f"zovlog:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
             stride = self.kv_caches[layer_name].stride()
@@ -1477,16 +1558,29 @@ class MoRIIOConnectorWorker:
                 offset_local.append(offset_k_local)
                 offset_remote.append(offset_k_remote)
                 transfer_sizes.append(transfer_size_byte)
-
-
-                
-                
-                # self.moriio_wrapper.read_remote_data(transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
-                # self.moriio_wrapper.read_remote_data(transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
-            self.moriio_wrapper.read_remote_data(transfer_sizes,offset_local, offset_remote,sess_idx)
-            sess_idx+=1
-        self.moriio_wrapper.waiting_for_read_complete()
         
+
+                if not use_batch:
+                    pass
+                
+                #[1,2], [2,5].
+                     # self.moriio_wrapper.read_remote_data_s(transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
+                    # self.moriio_wrapper.read_remote_data_s(transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
+                    print("!!!!",transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
+                    print("!!!!",transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
+            a,b,c=self.merge_contiguous_blocks(offset_local,offset_remote,transfer_sizes)
+            
+            if use_batch:
+                self.moriio_wrapper.read_remote_data(transfer_sizes,offset_local, offset_remote,sess_idx)
+            else:
+                for rang_idx in range(len(a)):
+                    print("bbbb",a[rang_idx],b[rang_idx],c[rang_idx])
+                    self.moriio_wrapper.read_remote_data_s(a[rang_idx],b[rang_idx],c[rang_idx])
+            sess_idx+=1
+        
+        self.moriio_wrapper.waiting_for_read_complete()
+        # time.sleep(15)
+
         # 结束计时
         end = time.perf_counter()
 
