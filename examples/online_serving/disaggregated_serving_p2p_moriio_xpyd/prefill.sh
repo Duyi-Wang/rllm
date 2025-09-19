@@ -21,6 +21,8 @@ export VLLM_USE_V1=1
 export VLLM_ROCM_USE_AITER=1 
 export VLLM_ENABLE_DSV3=0  
 export SAFETENSORS_FAST_GPU=1   
+export VLLM_TORCH_PROFILER_DIR=/home/mingzliu/profile_logs
+
 # /apps/data/models/models--Qwen--Qwen3-0.6B/snapshots/e6de91484c29aa9480d55605af694f39b081c455
 # {
  vllm serve /nfs/data/Qwen3-32B   \
@@ -30,12 +32,12 @@ export SAFETENSORS_FAST_GPU=1
     --max-num-batched-tokens 6144 \
     --host 0.0.0.0 \
     --port 20005 \
-        --enforce-eager \
+    --enforce-eager \
     --trust-remote-code \
     --gpu-memory-utilization 0.6 \
     --disable-log-request \
     --served-model-name deepseek-ai/DeepSeek-R1 \
-    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_producer","kv_port":"21001","kv_connector_extra_config":{"proxy_ip":"127.0.0.1","proxy_port":"30001","proxy_ping_port":"36367","local_ping_port":"7777","http_port":"20005","handshake_port":60000,"notify_port":49856}}'
+    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_producer","kv_port":"21001","kv_connector_extra_config":{"proxy_ip":"10.194.132.65","proxy_port":"30001","proxy_ping_port":"36367","local_ping_port":"7777","http_port":"20005","handshake_port":60000,"notify_port":49856}}'
            
            
 #           "--kv-transfer-config={\"kv_connector\":\"MoRIIOConnector\",\"kv_role\":\"kv_producer\",\"kv_port\":\"21001\",\"kv_connector_extra_config\":{\"proxy_ip\":\"127.0.0.1\",\"proxy_port\":\"30001\",\"proxy_ping_port\":\"36367\",\"local_ping_port\":\"7777\",\"http_port\":\"20005\",\"handshake_port\":60000,\"notify_port\":49856}}"        ],

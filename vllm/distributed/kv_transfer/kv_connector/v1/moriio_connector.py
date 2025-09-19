@@ -1422,7 +1422,7 @@ class MoRIIOConnectorWorker:
         # Add to requests that are waiting to be read and track expiration.
         self._reqs_to_send.update(metadata.reqs_to_send)
         for req_id, _ in metadata.reqs_to_recv.items():
-            logger.info(f"zovlog: send {req_id} to notify ")
+            # logger.info(f"zovlog: send {req_id} to notify ")
             self.moriio_wrapper.send_notify_to_P(req_id)
 
     def _read_blocks_for_req(self, req_id: str, meta: ReqMeta):
@@ -1503,7 +1503,7 @@ class MoRIIOConnectorWorker:
                      remote_block_ids: list[int], 
                      dst_engine_id: str,
                      request_id: str):
-        logger.info(f"zovlog:========> start read blocks {local_block_ids = },{remote_block_ids = },{dst_engine_id = },{request_id = }")
+        # logger.info(f"zovlog:========> start read blocks {local_block_ids = },{remote_block_ids = },{dst_engine_id = },{request_id = }")
         # return
         # 每一层的对应blkid都需要传输
         import time
@@ -1572,6 +1572,11 @@ class MoRIIOConnectorWorker:
             
             if use_batch:
                 # self.moriio_wrapper.read_remote_data(transfer_sizes,offset_local, offset_remote,sess_idx)
+                
+                # print(f"!!!!len(buffer){len(c)}")
+                # for ii in range(len(c)):
+                #     print(c[ii]/1024)
+                
                 self.moriio_wrapper.read_remote_data(c,a, b,sess_idx)
 
             else:

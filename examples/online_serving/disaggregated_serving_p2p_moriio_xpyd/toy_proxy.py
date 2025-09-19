@@ -68,7 +68,7 @@ def _listen_for_register(hostname, port):
                 if data['request_address'] not in decode_instances:
                     # decode_instances.append(data['request_address'])
                     decode_instances.append(data)
-            print(f"zovlog:====> recv {data},remote_addr={remote_addr},{prefill_instances = },{decode_instances = }")
+            # print(f"zovlog:====> recv {data},remote_addr={remote_addr},{prefill_instances = },{decode_instances = }")
 
 def start_service_discovery(hostname, port):
     if not hostname:
@@ -176,8 +176,87 @@ async def handle_request():
     request_nums += 1
     # print(f"zovlog:-----------> quit request")
     return response
+async def send_profile_cmd(req_data, profiler_cmd):
+    global request_nums
+    
+    prefill_endpoint = prefill_instances[request_nums % len(prefill_instances)]
+    decode_endpoint = decode_instances[request_nums % len(decode_instances)]
+    
+    headers = {
+        "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}",
+        "X-Request-Id": str(uuid.uuid4())
+    }
+
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6 * 60 * 60)) as session:
+        # 发送到prefill
+        prefill_response = await session.post(
+            f"http://0.0.0.0:20005/{profiler_cmd}_profile",
+            json=req_data, headers=headers
+        )
+        
+        # 发送到decode
+        decode_response = await session.post(
+            f"http://10.194.132.77:40005/{profiler_cmd}_profile", 
+            json=req_data, headers=headers
+        )
+        
+        # 安全处理prefill响应
+        if prefill_response.status == 200:
+            try:
+                prefill_result = await prefill_response.json()
+            except:
+                prefill_text = await prefill_response.text()
+                prefill_result = {"status": "success", "message": prefill_text}
+        else:
+            prefill_result = {"error": f"HTTP {prefill_response.status}", "text": await prefill_response.text()}
+        
+        # 安全处理decode响应
+        if decode_response.status == 200:
+            try:
+                decode_result = await decode_response.json()
+            except:
+                decode_text = await decode_response.text()
+                decode_result = {"status": "success", "message": decode_text}
+        else:
+            decode_result = {"error": f"HTTP {decode_response.status}", "text": await decode_response.text()}
+        
+        return {
+            "prefill": prefill_result,
+            "decode": decode_result
+        }
+
+@app.post("/start_profile")
+async def start_profile():
+    try:
+        req_data =  await request.get_json(silent=True) or {}
+
+        return await send_profile_cmd( req_data, "start")
+
+    except Exception as e:
+        import sys
+        import traceback
+        exc_info = sys.exc_info()
+        print("Error occurred in disagg prefill proxy server"
+              " - start_profile endpoint")
+        print(e)
+        print("".join(traceback.format_exception(*exc_info)))
 
 
+@app.post("/stop_profile")
+async def stop_profile():
+    try:
+        req_data =  await request.get_json(silent=True) or {}
+
+        return await send_profile_cmd( req_data, "stop")
+
+    except Exception as e:
+        import sys
+        import traceback
+        exc_info = sys.exc_info()
+        print("Error occurred in disagg prefill proxy server"
+              " - stop_profile endpoint")
+        print(e)
+        print("".join(traceback.format_exception(*exc_info)))
 if __name__ == '__main__':
     t = start_service_discovery("0.0.0.0", 36367)
     app.debug = True 
