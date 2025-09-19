@@ -1,0 +1,1 @@
+alias cdpd="cd /nfs/users/mingzliu/vllm/examples/online_serving/disaggregated_serving_p2p_moriio_xpyd"
