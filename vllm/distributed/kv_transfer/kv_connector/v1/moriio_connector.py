@@ -1531,6 +1531,7 @@ class MoRIIOConnectorWorker:
         sess_idx=0
         use_batch=True
         for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
+            
             # logger.error(f"zovlog:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
             stride = self.kv_caches[layer_name].stride()
             # self.moriio_wrapper.set_local_memory_metadata(local_kv_cache_metadata[0])
@@ -1541,12 +1542,15 @@ class MoRIIOConnectorWorker:
             offset_local=[]
             offset_remote=[]
             transfer_sizes=[]
+            sess_id=[]
+            sz=self.kv_caches[layer_name].element_size()
+            transfer_size_byte=blksize * hn * hs * sz
             for idx,local_blkid in enumerate(local_block_ids):
-                offset_k_local = self.kv_caches[layer_name].element_size() * (0 * stride[0] + local_blkid * stride[1])
-                offset_v_local = self.kv_caches[layer_name].element_size() * (1 * stride[0] + local_blkid * stride[1])
-                offset_k_remote = self.kv_caches[layer_name].element_size() * (0 * stride[0] + remote_block_ids[idx] * stride[1])
-                offset_v_remote = self.kv_caches[layer_name].element_size() * (1 * stride[0] + remote_block_ids[idx] * stride[1])
-                transfer_size_byte = blksize * hn * hs * self.kv_caches[layer_name].element_size()
+                offset_k_local = sz * (0 * stride[0] + local_blkid * stride[1])
+                offset_v_local = sz* (1 * stride[0] + local_blkid * stride[1])
+                offset_k_remote = sz * (0 * stride[0] + remote_block_ids[idx] * stride[1])
+                offset_v_remote = sz * (1 * stride[0] + remote_block_ids[idx] * stride[1])
+                # transfer_size_byte = blksize * hn * hs * sz
                 # logger.info(f"zovlog:===========>{self.kv_cache_shape = },{layer_name = },{offset_k = },{offset_v = },{transfer_size_byte = },{blkid = },{stride = }")
                 
                 
@@ -1581,7 +1585,7 @@ class MoRIIOConnectorWorker:
 
             else:
                 for rang_idx in range(len(a)):
-                    print("bbbb",c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
+                    # print("bbbb",c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
                     self.moriio_wrapper.read_remote_data_s(c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
             sess_idx+=1
         
