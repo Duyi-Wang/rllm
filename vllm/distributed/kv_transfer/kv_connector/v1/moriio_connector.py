@@ -266,6 +266,7 @@ class MoRIIOConnectorMetadata(KVConnectorMetadata):
 
     def __init__(self):
         self.reqs_to_recv: dict[ReqId, ReqMeta] = {}
+        self.reqs_to_save: dict[ReqId, ReqMeta] = {}
         self.reqs_to_send: dict[ReqId, float] = {}
 
     def __repr__(self):
@@ -284,8 +285,10 @@ class MoRIIOConnectorMetadata(KVConnectorMetadata):
         request_id: ReqId,
         local_block_ids: list[int],
         kv_transfer_params: dict[str, Any],
-    ):
-        self.reqs_to_recv[request_id] = ReqMeta(
+    ):  
+        wirte_mode=True
+        read_mode=True
+        _req = ReqMeta(
             local_block_ids=local_block_ids,
             remote_block_ids=kv_transfer_params["remote_block_ids"],
             remote_engine_id=kv_transfer_params["remote_engine_id"],
@@ -297,6 +300,10 @@ class MoRIIOConnectorMetadata(KVConnectorMetadata):
         )
 
 
+        if wirte_mode:
+            self.reqs_to_save[request_id] = _req
+        if read_mode:
+            self.reqs_to_recv[request_id] = _req
 class MoRIIOConnector(KVConnectorBase_V1):
 
     def __init__(self, vllm_config: VllmConfig, role: KVConnectorRole):
@@ -374,8 +381,11 @@ class MoRIIOConnector(KVConnectorBase_V1):
 
     def save_kv_layer(self, layer_name: str, kv_layer: torch.Tensor,
                       attn_metadata: "AttentionMetadata", **kwargs) -> None:
-        """NixlConnector does not save explicitly."""
-        pass
+        
+         # Only producer/prefill saves KV Cache
+    
+        self.connector_worker.save_kv_layer(self._connector_metadata, layer_name, kv_layer, attn_metadata, **kwargs)
+        return None
 
     def wait_for_save(self):
         """NixlConnector does not save explicitly."""
@@ -401,6 +411,8 @@ class MoRIIOConnectorScheduler:
         # New requests are added by update_state_after_alloc in
         # the scheduler. Used to make metadata passed to Worker.
         self._reqs_need_recv: dict[ReqId, tuple[Request, list[int]]] = {}
+        self._reqs_need_save: dict[ReqId, tuple[Request, list[int]]] = {}
+
         # Reqs to send and their expiration time
         self._reqs_need_send: dict[ReqId, float] = {}
         self.is_producer = vllm_config.kv_transfer_config.kv_role == "kv_producer"
@@ -455,6 +467,12 @@ class MoRIIOConnectorScheduler:
                                  num_external_tokens: int):
         
         params = request.kv_transfer_params # zovlog: params 是none
+        
+        
+        if params.get("do_remote_decode"):
+            local_block_ids = blocks.get_block_ids()[0]
+            self._reqs_need_save[request.request_id] = (
+                        request, local_block_ids)
         # logger.info(
             # f"moriioConnector update_state_after_alloc: "
             # f"num_external_tokens={num_external_tokens}, kv_transfer_params={params},{params.get("do_remote_prefill") = },{params.get("remote_block_ids") = }")
@@ -506,10 +524,20 @@ class MoRIIOConnectorScheduler:
                 kv_transfer_params=req.kv_transfer_params,
             )
 
+        for req_id, (req, block_ids) in self._reqs_need_save.items():
+            assert req.kv_transfer_params is not None
+            meta.add_new_req(
+                request_id=req_id,
+                local_block_ids=block_ids,
+                kv_transfer_params=req.kv_transfer_params,
+       
+            )
         # Clear the list once workers start the transfers
-        self._reqs_need_recv.clear()
-
+        
         meta.reqs_to_send = self._reqs_need_send
+
+        self._reqs_need_recv.clear()
+        self._reqs_need_save.clear()
         self._reqs_need_send = {}
 
         return meta
@@ -744,6 +772,7 @@ class MoRIIOConnectorWorker:
         self.block_window_per_layer: list[Optional[int]] = []
         self.use_mla = self.model_config.use_mla
         self.builded_session = False
+        self.builded_write_session =False
         backend = get_attn_backend(self.model_config.get_head_size(),
                                    self.model_config.dtype,
                                    self.cache_config.cache_dtype,
@@ -1378,6 +1407,33 @@ class MoRIIOConnectorWorker:
         '''
         return done_req_ids
     
+    
+    def save_kv_layer(self, metadata: MoRIIOConnectorMetadata,layer_name: str, kv_layer: torch.Tensor,
+                      attn_metadata: "AttentionMetadata", **kwargs):
+        if not self.is_producer:
+            pass
+        # for
+        for req_id, meta in metadata.reqs_to_save.items():
+            # logger.info(f"zovlog:======> enter load kv for loop,{meta.remote_host = },{meta.remote_port = },{meta.local_block_ids = },{meta.remote_block_ids = },{meta.remote_engine_id = }")
+            remote_engine_id = meta.remote_engine_id
+            # logger.debug(
+            #     "start_save_kv for request %s from remote engine %s. "
+            #     "Num local_block_ids: %s. Num remote_block_ids: %s. ", req_id,
+            #     remote_engine_id, len(meta.local_block_ids),
+            #     len(meta.remote_block_ids))
+            if remote_engine_id not in self._remote_agents:
+                # Initiate handshake with remote engine to exchange metadata.
+                with self._handshake_lock:
+                    if remote_engine_id not in self._remote_agents:
+                        self._background_nixl_handshake(req_id, remote_engine_id, meta)
+                        # logger.info(f"zovlog:==============> _background_nixl_handshake launched!")
+                        continue
+                        
+            # Handshake already completed, start async read xfer.
+            self._write_blocks_for_req(req_id, meta, layer_name,kv_layer)
+
+        #     pass
+    
     def start_load_kv(self, metadata: MoRIIOConnectorMetadata):
         """
         Start loading by triggering non-blocking nixl_xfer.
@@ -1438,7 +1494,35 @@ class MoRIIOConnectorWorker:
             local_block_ids=meta.local_block_ids,
             remote_block_ids=meta.remote_block_ids,
         )
-    
+    def _write_blocks_for_req(self, req_id: str, meta: ReqMeta,layer_name,kv_layer):
+        self._write_blocks(
+            request_id=req_id,
+            dst_engine_id=meta.remote_engine_id,
+            local_block_ids=meta.local_block_ids,
+            remote_block_ids=meta.remote_block_ids,
+            layer_name=layer_name,
+            kv_layer=kv_layer
+        )
+    def _write_blocks(self, 
+                     local_block_ids: list[int],
+                     remote_block_ids: list[int], 
+                     dst_engine_id: str,
+                     request_id: str,
+                     layer_name: str,
+                     kv_layer: torch.Tensor):
+        if not self.builded_write_session:
+            for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
+            # logger.error(f"zovlog:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
+                stride = self.kv_caches[layer_name].stride()
+                self.moriio_wrapper.set_local_memory_metadata(local_kv_cache_metadata[0])
+                self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_name][0])
+                self.moriio_wrapper.build_session()
+            self.builded_write_session=True
+        
+        
+        
+        pass
+        
     
     
     
@@ -1511,7 +1595,6 @@ class MoRIIOConnectorWorker:
         # 每一层的对应blkid都需要传输
         start = time.perf_counter()
 
-        
         
         if not self.builded_session:
             for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
