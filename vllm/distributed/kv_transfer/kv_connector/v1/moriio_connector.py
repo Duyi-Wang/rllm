@@ -361,9 +361,12 @@ class MoRIIOConnector(KVConnectorBase_V1):
 
     def start_load_kv(self, forward_context: "ForwardContext",
                       **kwargs) -> None:
+        st = time.perf_counter()
         assert self.connector_worker is not None
         assert isinstance(self._connector_metadata, MoRIIOConnectorMetadata)
         self.connector_worker.start_load_kv(self._connector_metadata)
+        en = time.perf_counter()
+        print(f"start_load_kv总时间{en - st} sec")
 
     def wait_for_layer_load(self, layer_name: str) -> None:
         """NixlConnector does not do layerwise saving."""
@@ -1506,7 +1509,6 @@ class MoRIIOConnectorWorker:
         # logger.info(f"zovlog:========> start read blocks {local_block_ids = },{remote_block_ids = },{dst_engine_id = },{request_id = }")
         # return
         # 每一层的对应blkid都需要传输
-        import time
         start = time.perf_counter()
 
         
@@ -1519,7 +1521,6 @@ class MoRIIOConnectorWorker:
                 self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_name][0])
                 self.moriio_wrapper.build_session()
             self.builded_session=True
-            import time
             # print("sleeping")
             # time.sleep(20)
         layername0 = list(self.layer_name_to_local_kv_cache_metadata.keys())[0]
@@ -1530,6 +1531,10 @@ class MoRIIOConnectorWorker:
         # stride = [blknum*blksize*hn*hs   ,blksize*hs*hn   ,hs*hn   ,hs   ,1]
         sess_idx=0
         use_batch=True
+        al=[]
+        bl=[]
+        cl=[]
+        sl=[]
         for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
             
             # logger.error(f"zovlog:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
@@ -1545,6 +1550,7 @@ class MoRIIOConnectorWorker:
             sess_id=[]
             sz=self.kv_caches[layer_name].element_size()
             transfer_size_byte=blksize * hn * hs * sz
+          
             for idx,local_blkid in enumerate(local_block_ids):
                 offset_k_local = sz * (0 * stride[0] + local_blkid * stride[1])
                 offset_v_local = sz* (1 * stride[0] + local_blkid * stride[1])
@@ -1580,13 +1586,17 @@ class MoRIIOConnectorWorker:
                 # print(f"!!!!len(buffer){len(c)}")
                 # for ii in range(len(c)):
                 #     print(c[ii]/1024)
-                
-                self.moriio_wrapper.read_remote_data(c,a, b,sess_idx)
+                pass
+                # self.moriio_wrapper.read_remote_data(c,a, b,sess_idx)
 
             else:
                 for rang_idx in range(len(a)):
                     # print("bbbb",c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
                     self.moriio_wrapper.read_remote_data_s(c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
+            al.append(a)
+            bl.append(b)
+            cl.append(c)
+            sl.append(sess_idx)
             sess_idx+=1
         
         self.moriio_wrapper.waiting_for_read_complete()
@@ -1597,6 +1607,13 @@ class MoRIIOConnectorWorker:
 
         # 计算耗时
         print(f"耗时：{end - start:.4f} 秒")
+
+        for inb in range(len(al)):
+            self.moriio_wrapper.read_remote_data(cl[inb],al[inb],bl[inb],sl[inb])
+        self.moriio_wrapper.waiting_for_read_complete()
+        end2=time.perf_counter()
+
+        print(f"纯传输耗时：{end2 - end:.4f} 秒")
 
         return
         # NOTE(rob): having the staging blocks be on the READER side is
