@@ -285,9 +285,10 @@ class MoRIIOConnectorMetadata(KVConnectorMetadata):
         request_id: ReqId,
         local_block_ids: list[int],
         kv_transfer_params: dict[str, Any],
+        write_mode=False,
     ):  
-        wirte_mode=True
-        read_mode=True
+        # wirte_mode=False
+        # read_mode=True
         _req = ReqMeta(
             local_block_ids=local_block_ids,
             remote_block_ids=kv_transfer_params["remote_block_ids"],
@@ -300,9 +301,9 @@ class MoRIIOConnectorMetadata(KVConnectorMetadata):
         )
 
 
-        if wirte_mode:
+        if write_mode:
             self.reqs_to_save[request_id] = _req
-        if read_mode:
+        else:
             self.reqs_to_recv[request_id] = _req
 class MoRIIOConnector(KVConnectorBase_V1):
 
@@ -530,6 +531,7 @@ class MoRIIOConnectorScheduler:
                 request_id=req_id,
                 local_block_ids=block_ids,
                 kv_transfer_params=req.kv_transfer_params,
+                write_mode=True,
        
             )
         # Clear the list once workers start the transfers
@@ -1413,6 +1415,7 @@ class MoRIIOConnectorWorker:
         if not self.is_producer:
             pass
         # for
+        pass
         for req_id, meta in metadata.reqs_to_save.items():
             # logger.info(f"zovlog:======> enter load kv for loop,{meta.remote_host = },{meta.remote_port = },{meta.local_block_ids = },{meta.remote_block_ids = },{meta.remote_engine_id = }")
             remote_engine_id = meta.remote_engine_id
@@ -1510,14 +1513,15 @@ class MoRIIOConnectorWorker:
                      request_id: str,
                      layer_name: str,
                      kv_layer: torch.Tensor):
-        if not self.builded_write_session:
-            for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
-            # logger.error(f"zovlog:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
-                stride = self.kv_caches[layer_name].stride()
-                self.moriio_wrapper.set_local_memory_metadata(local_kv_cache_metadata[0])
-                self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_name][0])
-                self.moriio_wrapper.build_session()
-            self.builded_write_session=True
+        pass
+        # if not self.builded_write_session:
+        #     for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
+        #     # logger.error(f"zovlog:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
+        #         stride = self.kv_caches[layer_name].stride()
+        #         self.moriio_wrapper.set_local_memory_metadata(local_kv_cache_metadata[0])
+        #         self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_name][0])
+        #         self.moriio_wrapper.build_session()
+        #     self.builded_write_session=True
         
         
         
