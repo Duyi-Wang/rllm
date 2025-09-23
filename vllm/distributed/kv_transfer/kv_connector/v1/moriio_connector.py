@@ -179,9 +179,23 @@ class MoRIIOWrapper():
 
 
     def waiting_for_read_complete(self):
-        while self.transfer_status:
-            status = self.transfer_status.pop(0)
-            status.Wait()
+        """等待所有传输完成的优化版本"""
+        if not self.transfer_status:
+            return
+        
+        # 批量处理，避免频繁的list操作
+        transfers_to_wait = []
+        with self.lock:
+            transfers_to_wait = self.transfer_status[:]
+            self.transfer_status.clear()
+        
+        # 并发等待（如果MoRIIO支持）
+        for status in transfers_to_wait:
+            try:
+                status.Wait()
+            except Exception as e:
+                logger.error(f"Transfer {status} failed: {e}")
+                raise
             
 
     def async_wait_D_finish_reqid(self):
@@ -1535,7 +1549,7 @@ class MoRIIOConnectorWorker:
         
         layerwise=True
         logger.info(f"mymy {layer_name = }")
-        use_batch=False
+        use_batch=True
         if not self.builded_write_session:
             for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
                 stride = self.kv_caches[layer_name].stride()
@@ -1593,16 +1607,21 @@ class MoRIIOConnectorWorker:
                 # print(f"!!!!len(buffer){len(c)}")
                 # for ii in range(len(c)):
                 #     print(c[ii]/1024)
-                time.sleep(0.5)
-
+                # time.sleep(1)
+                self.moriio_wrapper.waiting_for_read_complete()
                 self.moriio_wrapper.write_remote_data(c,a, b,sess_idx)
                 self.moriio_wrapper.waiting_for_read_complete()
-                time.sleep(0.5)
+                # time.sleep(1)
             else:
+                self.moriio_wrapper.waiting_for_read_complete()
+
                 for rang_idx in range(len(a)):
+                    time.sleep(0.1)
                     # print("bbbb",c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
                     self.moriio_wrapper.write_remote_data_s(c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
             # if '27' in layer_name:
+                    time.sleep(0.1)
+
                 self.moriio_wrapper.waiting_for_read_complete()
 
         elif not layerwise:
