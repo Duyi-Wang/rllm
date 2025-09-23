@@ -1529,7 +1529,7 @@ class MoRIIOConnectorWorker:
                      kv_layer: torch.Tensor):
         # pass
         # TODO  self._handshake_futures[eid]
-        start = time.perf_counter
+        start = time.perf_counter()
         if not self.builded_write_session:
             for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
                 stride = self.kv_caches[layer_name].stride()
@@ -1539,7 +1539,6 @@ class MoRIIOConnectorWorker:
                 self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_name][0])
                 self.moriio_wrapper.build_session()
             self.builded_write_session=True
-        
         if '27' not in layer_name:
             return
         _,blknum,blksize,hn,hs = self.kv_cache_shape
@@ -1565,7 +1564,8 @@ class MoRIIOConnectorWorker:
             sess_id=[]
             sz=self.kv_caches[layer_name].element_size()
             transfer_size_byte=blksize * hn * hs * sz
-          
+            # TODO, assume remote_block_id = local_block_id for only 1P1D debug
+            remote_block_ids=local_block_ids
             for idx,local_blkid in enumerate(local_block_ids):
                 offset_k_local = sz * (0 * stride[0] + local_blkid * stride[1])
                 offset_v_local = sz* (1 * stride[0] + local_blkid * stride[1])
@@ -1614,7 +1614,6 @@ class MoRIIOConnectorWorker:
             sl.append(sess_idx)
             sess_idx+=1
         
-        self.moriio_wrapper.waiting_for_read_complete()
         # time.sleep(15)
 
         # 结束计时
@@ -1622,12 +1621,13 @@ class MoRIIOConnectorWorker:
 
         # 计算耗时
         print(f"耗时：{end - start:.4f} 秒")
+        time.sleep(3)
 
         for inb in range(len(al)):
             self.moriio_wrapper.write_remote_data(cl[inb],al[inb],bl[inb],sl[inb])
         self.moriio_wrapper.waiting_for_read_complete()
         end2=time.perf_counter()
-
+        time.sleep(3)
         print(f"纯传输耗时：{end2 - end:.4f} 秒")
 
         return
@@ -1707,7 +1707,7 @@ class MoRIIOConnectorWorker:
         # 每一层的对应blkid都需要传输
         start = time.perf_counter()
 
-        
+    
         if not self.builded_session:
             for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
                 # logger.info(f"session map:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
@@ -1751,6 +1751,7 @@ class MoRIIOConnectorWorker:
                 offset_v_local = sz* (1 * stride[0] + local_blkid * stride[1])
                 offset_k_remote = sz * (0 * stride[0] + remote_block_ids[idx] * stride[1])
                 offset_v_remote = sz * (1 * stride[0] + remote_block_ids[idx] * stride[1])
+                assert(local_blkid==remote_block_ids[idx])
                 # transfer_size_byte = blksize * hn * hs * sz
                 # logger.info(f"zovlog:===========>{self.kv_cache_shape = },{layer_name = },{offset_k = },{offset_v = },{transfer_size_byte = },{blkid = },{stride = }")
                 
@@ -1774,7 +1775,7 @@ class MoRIIOConnectorWorker:
                     print("!!!!",transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
                     print("!!!!",transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
             a,b,c=self.merge_contiguous_blocks(offset_local,offset_remote,transfer_sizes)
-            
+            return 
             if use_batch:
                 # self.moriio_wrapper.read_remote_data(transfer_sizes,offset_local, offset_remote,sess_idx)
                 
@@ -1793,6 +1794,7 @@ class MoRIIOConnectorWorker:
             cl.append(c)
             sl.append(sess_idx)
             sess_idx+=1
+        
         
         self.moriio_wrapper.waiting_for_read_complete()
         # time.sleep(15)
