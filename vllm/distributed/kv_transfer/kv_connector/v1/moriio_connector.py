@@ -155,12 +155,14 @@ class MoRIIOWrapper():
     def write_remote_data(self,transfer_size_byte,local_offset = 0,remote_offset = 0, sess_idx=0):
         assert self.remote_memory_metadata is not None,"You have not register remote memory data!"
         assert self.local_memory_registered,"You have not register local memory data!"
-   
+        write_uid=self.moriio_engine.allocate_transfer_uid()
+        # print(write_uid)
         transfer_status = self.sessiones[sess_idx].batch_write(
              local_offset, 
              remote_offset, 
             transfer_size_byte,
-            self.moriio_engine.allocate_transfer_uid())
+            write_uid
+            )
       
         self.transfer_status.append(transfer_status)
     def write_remote_data_s(self,transfer_size_byte,local_offset = 0,remote_offset = 0, sess_idx=0):
@@ -398,6 +400,7 @@ class MoRIIOConnector(KVConnectorBase_V1):
 
     def wait_for_save(self):
         """NixlConnector does not save explicitly."""
+        self.connector_worker.moriio_wrapper.waiting_for_read_complete()
         pass
 
 
@@ -969,7 +972,7 @@ class MoRIIOConnectorWorker:
             tp_size = int(meta.tp_size)
             fut = self._handshake_initiation_executor.submit(self._nixl_handshake, host, port,tp_size, remote_engine_id)
             
-
+            
             def done_callback(f: Future[dict[int, str]], eid=remote_engine_id):
                 with self._handshake_lock:
                     del self._handshake_futures[eid]
@@ -977,7 +980,7 @@ class MoRIIOConnectorWorker:
                         self._remote_agents[eid] = f.result()
                     except Exception:
                         logger.exception("Handshake with %s failed", eid)
-
+            # if not self.is_producer:
             fut.add_done_callback(done_callback)
             self._handshake_futures[remote_engine_id] = fut
 
@@ -1431,7 +1434,7 @@ class MoRIIOConnectorWorker:
         # for
         # pass
         for req_id, meta in metadata.reqs_to_save.items():
-            logger.info(f"log:======> enter save kv for loop,{meta.remote_host = },{meta.remote_port = },{meta.local_block_ids = },{meta.remote_block_ids = },{meta.remote_engine_id = }")
+            # logger.info(f"log:======> enter save kv for loop,{meta.remote_host = },{meta.remote_port = },{meta.local_block_ids = },{meta.remote_block_ids = },{meta.remote_engine_id = }")
             remote_engine_id = meta.remote_engine_id
             # logger.debug(
             #     "start_save_kv for request %s from remote engine %s. "
@@ -1459,7 +1462,7 @@ class MoRIIOConnectorWorker:
         if self.is_producer:
             self.moriio_wrapper.async_wait_D_finish_reqid()
             return
-        
+        # time.sleep(5)
         # logger.info(f"zovlog:======> start load kv,{metadata.reqs_to_recv.items() = }")
         for req_id, meta in metadata.reqs_to_recv.items():
             # logger.info(f"zovlog:======> enter load kv for loop,{meta.remote_host = },{meta.remote_port = },{meta.local_block_ids = },{meta.remote_block_ids = },{meta.remote_engine_id = }")
@@ -1529,52 +1532,39 @@ class MoRIIOConnectorWorker:
                      kv_layer: torch.Tensor):
         # pass
         # TODO  self._handshake_futures[eid]
-        start = time.perf_counter()
+        
+        layerwise=True
+        logger.info(f"mymy {layer_name = }")
+        use_batch=True
         if not self.builded_write_session:
             for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
                 stride = self.kv_caches[layer_name].stride()
-                logger.info(f"mapping {layer_name} local memory {local_kv_cache_metadata[0]}, remote memory {self.layer_name_to_remote_kv_cache_metadata[layer_name][0]}")
+                # logger.info(f"mapping {layer_name} local memory {local_kv_cache_metadata[0]}, remote memory {self.layer_name_to_remote_kv_cache_metadata[layer_name][0]}")
 
                 self.moriio_wrapper.set_local_memory_metadata(local_kv_cache_metadata[0])
                 self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_name][0])
                 self.moriio_wrapper.build_session()
             self.builded_write_session=True
-        if '27' not in layer_name:
-            return
-        _,blknum,blksize,hn,hs = self.kv_cache_shape
-        # stride = [blknum*blksize*hn*hs   ,blksize*hs*hn   ,hs*hn   ,hs   ,1]
-        sess_idx=0
-        use_batch=True
-        al=[]
-        bl=[]
-        cl=[]
-        sl=[]
-        for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
+        if layerwise:
+            _,blknum,blksize,hn,hs = self.kv_cache_shape
+            sess_idx = list(self.layer_name_to_local_kv_cache_metadata.keys()).index(layer_name)
             
-            # logger.error(f"zovlog:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
+            start = time.perf_counter()
+            local_kv_cache_metadata=self.layer_name_to_local_kv_cache_metadata[layer_name]
             stride = self.kv_caches[layer_name].stride()
-            # self.moriio_wrapper.set_local_memory_metadata(local_kv_cache_metadata[0])
-            # self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_name][0])
-            # 在local_block_ids这个序列中,判断一下那些是连续的
-            # for start,end in zip(contiguous_ids[])
-            #todo make batch_read
             offset_local=[]
             offset_remote=[]
             transfer_sizes=[]
             sess_id=[]
             sz=self.kv_caches[layer_name].element_size()
             transfer_size_byte=blksize * hn * hs * sz
-            # TODO, assume remote_block_id = local_block_id for only 1P1D debug
             remote_block_ids=local_block_ids
+
             for idx,local_blkid in enumerate(local_block_ids):
                 offset_k_local = sz * (0 * stride[0] + local_blkid * stride[1])
                 offset_v_local = sz* (1 * stride[0] + local_blkid * stride[1])
                 offset_k_remote = sz * (0 * stride[0] + remote_block_ids[idx] * stride[1])
                 offset_v_remote = sz * (1 * stride[0] + remote_block_ids[idx] * stride[1])
-                # transfer_size_byte = blksize * hn * hs * sz
-                # logger.info(f"zovlog:===========>{self.kv_cache_shape = },{layer_name = },{offset_k = },{offset_v = },{transfer_size_byte = },{blkid = },{stride = }")
-                
-                
                 offset_local.append(offset_v_local)
                 offset_remote.append(offset_v_remote)
                 transfer_sizes.append(transfer_size_byte)
@@ -1589,7 +1579,7 @@ class MoRIIOConnectorWorker:
                     pass
                 
                 #[1,2], [2,5].
-                     # self.moriio_wrapper.read_remote_data_s(transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
+                    # self.moriio_wrapper.read_remote_data_s(transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
                     # self.moriio_wrapper.read_remote_data_s(transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
                     print("!!!!",transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
                     print("!!!!",transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
@@ -1601,36 +1591,109 @@ class MoRIIOConnectorWorker:
                 # print(f"!!!!len(buffer){len(c)}")
                 # for ii in range(len(c)):
                 #     print(c[ii]/1024)
-                pass
-                # self.moriio_wrapper.read_remote_data(c,a, b,sess_idx)
-
+                
+                self.moriio_wrapper.write_remote_data(c,a, b,sess_idx)
+                self.moriio_wrapper.waiting_for_read_complete()
+                time.sleep(0.2)
             else:
                 for rang_idx in range(len(a)):
                     # print("bbbb",c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
                     self.moriio_wrapper.write_remote_data_s(c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
-            al.append(a)
-            bl.append(b)
-            cl.append(c)
-            sl.append(sess_idx)
-            sess_idx+=1
+            # if '27' in layer_name:
+        elif not layerwise:
         
-        # time.sleep(15)
+            
+            start = time.perf_counter()
+           
+            if '27' not in layer_name:
+                return
+            _,blknum,blksize,hn,hs = self.kv_cache_shape
+            # stride = [blknum*blksize*hn*hs   ,blksize*hs*hn   ,hs*hn   ,hs   ,1]
+            sess_idx=0
+            al=[]
+            bl=[]
+            cl=[]
+            sl=[]
+            for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
+                
+                # logger.error(f"zovlog:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
+                stride = self.kv_caches[layer_name].stride()
+                # self.moriio_wrapper.set_local_memory_metadata(local_kv_cache_metadata[0])
+                # self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_name][0])
+                # 在local_block_ids这个序列中,判断一下那些是连续的
+                # for start,end in zip(contiguous_ids[])
+                #todo make batch_read
+                offset_local=[]
+                offset_remote=[]
+                transfer_sizes=[]
+                sess_id=[]
+                sz=self.kv_caches[layer_name].element_size()
+                transfer_size_byte=blksize * hn * hs * sz
+                # TODO, assume remote_block_id = local_block_id for only 1P1D debug
+                remote_block_ids=local_block_ids
+                for idx,local_blkid in enumerate(local_block_ids):
+                    offset_k_local = sz * (0 * stride[0] + local_blkid * stride[1])
+                    offset_v_local = sz* (1 * stride[0] + local_blkid * stride[1])
+                    offset_k_remote = sz * (0 * stride[0] + remote_block_ids[idx] * stride[1])
+                    offset_v_remote = sz * (1 * stride[0] + remote_block_ids[idx] * stride[1])
+                    # transfer_size_byte = blksize * hn * hs * sz
+                    # logger.info(f"zovlog:===========>{self.kv_cache_shape = },{layer_name = },{offset_k = },{offset_v = },{transfer_size_byte = },{blkid = },{stride = }")
+                    
+                    
+                    offset_local.append(offset_v_local)
+                    offset_remote.append(offset_v_remote)
+                    transfer_sizes.append(transfer_size_byte)
 
-        # 结束计时
-        end = time.perf_counter()
+                
+                    offset_local.append(offset_k_local)
+                    offset_remote.append(offset_k_remote)
+                    transfer_sizes.append(transfer_size_byte)
+            
 
-        # 计算耗时
-        print(f"耗时：{end - start:.4f} 秒")
-        time.sleep(3)
+                    if not use_batch:
+                        pass
+                    
+                    #[1,2], [2,5].
+                        # self.moriio_wrapper.read_remote_data_s(transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
+                        # self.moriio_wrapper.read_remote_data_s(transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
+                        print("!!!!",transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
+                        print("!!!!",transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
+                a,b,c=self.merge_contiguous_blocks(offset_local,offset_remote,transfer_sizes)
+                
+                if use_batch:
+                    # self.moriio_wrapper.read_remote_data(transfer_sizes,offset_local, offset_remote,sess_idx)
+                    
+                    # print(f"!!!!len(buffer){len(c)}")
+                    # for ii in range(len(c)):
+                    #     print(c[ii]/1024)
+                    pass
+                    # self.moriio_wrapper.read_remote_data(c,a, b,sess_idx)
 
-        for inb in range(len(al)):
-            self.moriio_wrapper.write_remote_data(cl[inb],al[inb],bl[inb],sl[inb])
-        self.moriio_wrapper.waiting_for_read_complete()
-        end2=time.perf_counter()
-        time.sleep(3)
-        print(f"纯传输耗时：{end2 - end:.4f} 秒")
+                else:
+                    for rang_idx in range(len(a)):
+                        # print("bbbb",c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
+                        self.moriio_wrapper.write_remote_data_s(c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
+                al.append(a)
+                bl.append(b)
+                cl.append(c)
+                sl.append(sess_idx)
+            # time.sleep(15)
 
-        return
+            # 结束计时
+            end = time.perf_counter()
+
+            # 计算耗时
+            print(f"耗时：{end - start:.4f} 秒")
+            time.sleep(3)
+
+            for inb in range(len(al)):
+                self.moriio_wrapper.write_remote_data(cl[inb],al[inb],bl[inb],sl[inb])
+            self.moriio_wrapper.waiting_for_read_complete()
+            end2=time.perf_counter()
+            time.sleep(3)
+            print(f"纯传输耗时：{end2 - end:.4f} 秒")
+
+            return
         
         
         # pass
