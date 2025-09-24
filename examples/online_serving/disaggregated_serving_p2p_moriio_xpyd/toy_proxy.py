@@ -82,19 +82,20 @@ def start_service_discovery(hostname, port):
     _listener_thread.start()
     return _listener_thread
 
-async def send_request_to_prefill(endpoint,req_data,request_id,decode_handshake_port):
+async def send_request_to_prefill(endpoint,req_data,request_id,p_endpoint,pip,pports):
     # print(f"zovlog:======> proxy {endpoint = }")
     req_data_copy = copy.deepcopy(req_data)
     
     # 本地做prefill,且decode只需要pull模式,所以prefill不需要在这里知晓远程decode任何信息
+   
     req_data_copy['kv_transfer_params'] = {
         "do_remote_decode": True,
         "do_remote_prefill": False,
-        "remote_handshake_port": decode_handshake_port,
+        "remote_handshake_port": p_endpoint['handshake_port'],
         "remote_engine_id": None,
         "remote_block_ids": None,
-        "remote_host": None,
-        "remote_port": None
+        "remote_host":pip ,
+        "remote_port": pports,
     }
     req_data_copy["stream"] = False
     req_data_copy["max_tokens"] = 1
@@ -155,7 +156,8 @@ async def handle_request():
     request_id = str(uuid.uuid4())
     prefill_instance_endpoint = prefill_instances[request_nums % len(prefill_instances)]
     decode_instance_endpoint = decode_instances[request_nums % len(decode_instances)]
-    response_json = await send_request_to_prefill(prefill_instance_endpoint['request_address'],req_data,request_id,decode_instance_endpoint['handshake_port'])
+    dip,dport= extract_ip_port(decode_instance_endpoint['request_address'])
+    response_json = await send_request_to_prefill(prefill_instance_endpoint['request_address'],req_data,request_id,decode_instance_endpoint,dip,dport)
     # 现在decode可以获取prefill的所有信息了
     ip, port = extract_ip_port(prefill_instance_endpoint['request_address'])
     response_json['kv_transfer_params']["do_remote_decode"] = False
