@@ -1559,6 +1559,11 @@ class MoRIIOConnectorWorker:
                 self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_name][0])
                 self.moriio_wrapper.build_session()
             self.builded_write_session=True
+        
+        layername_0=list(self.layer_name_to_local_kv_cache_metadata.items())[0][0]
+        layername_5=list(self.layer_name_to_local_kv_cache_metadata.items())[5][0]
+        logger.info(f"!!)){layer_name= },  tensor:{layername_0=}:{self.kv_caches[layername_0].sum() = }")
+        logger.info(f"!!)){layer_name= },  tensor:{layername_5=}:{self.kv_caches[layername_5].sum() = }")
         if layerwise:
             _,blknum,blksize,hn,hs = self.kv_cache_shape
             sess_idx = list(self.layer_name_to_local_kv_cache_metadata.keys()).index(layer_name)
@@ -1607,11 +1612,11 @@ class MoRIIOConnectorWorker:
                 # print(f"!!!!len(buffer){len(c)}")
                 # for ii in range(len(c)):
                 #     print(c[ii]/1024)
-                # time.sleep(1)
-                self.moriio_wrapper.waiting_for_read_complete()
+                # time.sleep(0.2)
+                # self.moriio_wrapper.waiting_for_read_complete()
                 self.moriio_wrapper.write_remote_data(c,a, b,sess_idx)
-                self.moriio_wrapper.waiting_for_read_complete()
-                # time.sleep(1)
+                # self.moriio_wrapper.waiting_for_read_complete()
+                # time.sleep(0.2)
             else:
                 self.moriio_wrapper.waiting_for_read_complete()
 
@@ -1619,8 +1624,8 @@ class MoRIIOConnectorWorker:
                     time.sleep(0.1)
                     # print("bbbb",c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
                     self.moriio_wrapper.write_remote_data_s(c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
-            # if '27' in layer_name:
-                    time.sleep(0.1)
+            if '27' in layer_name:
+                    # time.sleep(0.1)
 
                 self.moriio_wrapper.waiting_for_read_complete()
 
@@ -1794,7 +1799,12 @@ class MoRIIOConnectorWorker:
         # 每一层的对应blkid都需要传输
         start = time.perf_counter()
 
-    
+        
+        
+        layername_0=list(self.layer_name_to_local_kv_cache_metadata.items())[0][0]
+        layername_5=list(self.layer_name_to_local_kv_cache_metadata.items())[5][0]
+        logger.info(f"!!))  tensor:{layername_0=}:{self.kv_caches[layername_0].sum() = }")
+        logger.info(f"!!))  tensor:{layername_5=}:{self.kv_caches[layername_5].sum() = }")
         if not self.builded_session:
             for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
                 # logger.info(f"session map:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
@@ -1806,7 +1816,8 @@ class MoRIIOConnectorWorker:
             self.builded_session=True
             # print("sleeping")
             # time.sleep(20)
-        # logger.info(f"tensor:{layername0}:::{self.kv_caches[layername0].sum() = }")
+       
+
         # self.kv_caches
         # contiguous_ids = search_contiguous_block_ids(local_block_ids,remote_block_ids)
         _,blknum,blksize,hn,hs = self.kv_cache_shape
