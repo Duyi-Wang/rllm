@@ -206,7 +206,8 @@ if TYPE_CHECKING:
     VLLM_NCCL_INCLUDE_PATH: Optional[str] = None
     VLLM_USE_FBGEMM: bool = False
     VLLM_MLA_FP8_PADDING: bool = False
-    VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT: bool = False
+    VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT: bool = False,
+    VLLM_ROCM_USE_AITER_TRITON_FUSED_RMSNORM_FP8_QUANT: bool = False
 
 
 def get_default_cache_root():
@@ -1483,6 +1484,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
     
     "VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT":
     lambda: bool(int(os.getenv("VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT", "0"))),
+
+    "VLLM_ROCM_USE_AITER_TRITON_FUSED_RMSNORM_FP8_QUANT":
+    lambda: bool(int(os.getenv("VLLM_ROCM_USE_AITER_TRITON_FUSED_RMSNORM_FP8_QUANT", "0"))),
+    
 }
 
 # --8<-- [end:env-vars-definition]
