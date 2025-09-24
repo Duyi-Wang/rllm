@@ -85,6 +85,8 @@ class MoRIIOWrapper():
         self.sock = None
         self.tp_rank = get_tensor_model_parallel_rank()
         self.sessiones=[]
+        self.has_register_remote_engine = False 
+
         # self.remote_handshake_port = None # P->D 发送read完毕的reqid
         # self.local_handshake_port = None # D<-P 接收read完毕的reqid
         # self.waiting_for_remote_read_complete_thread = None # P 节点需要在D节点read完成之后才能安全释放blockid,因此这里管理
@@ -105,6 +107,8 @@ class MoRIIOWrapper():
     def register_remote_engine(self,remote_packed_engine_metadata):
         consumer_engine_metadata = EngineDesc.unpack(remote_packed_engine_metadata)
         self.moriio_engine.register_remote_engine(consumer_engine_metadata)
+        #TODO, bind for req
+        self.has_register_remote_engine = True 
         return consumer_engine_metadata.key # str,engine name
     
     def register_local_tensor(self,tensor:torch.Tensor):
@@ -717,7 +721,7 @@ class MoRIIOConnectorWorker:
         self.slot_size_bytes = 0
 
         self.load_kv_flag = False # False 代表从未load过
-
+        self.write_kv_flag=False
         self.kv_cache_shape = None
         self.block_shape = None
         self.kv_element_size = 0
@@ -800,6 +804,7 @@ class MoRIIOConnectorWorker:
         self.use_mla = self.model_config.use_mla
         self.builded_session = False
         self.builded_write_session =False
+        self.debug_cache=[]
         backend = get_attn_backend(self.model_config.get_head_size(),
                                    self.model_config.dtype,
                                    self.cache_config.cache_dtype,
@@ -978,7 +983,6 @@ class MoRIIOConnectorWorker:
         fut = None
         if remote_engine_id is not None:
             fut = self._handshake_futures.get(remote_engine_id)
-        
         if fut is None:
             host = meta.remote_host
             # port = int(meta.remote_port)
@@ -986,6 +990,7 @@ class MoRIIOConnectorWorker:
             tp_size = int(meta.tp_size)
             fut = self._handshake_initiation_executor.submit(self._nixl_handshake, host, port,tp_size, remote_engine_id)
             
+          
             
             def done_callback(f: Future[dict[int, str]], eid=remote_engine_id):
                 with self._handshake_lock:
@@ -1003,6 +1008,7 @@ class MoRIIOConnectorWorker:
         def request_ready(_f: Future[Any], entry=(req_id, meta)):
             self._ready_requests.put(entry)
             self.load_kv_flag = True 
+            self.write_kv_flag=True
 
       
         fut.add_done_callback(request_ready)
@@ -1443,10 +1449,14 @@ class MoRIIOConnectorWorker:
     
     def save_kv_layer(self, metadata: MoRIIOConnectorMetadata,layer_name: str, kv_layer: torch.Tensor,
                       attn_metadata: "AttentionMetadata", **kwargs):
+        logger.info(f"kuqi{layer_name = }")
+
         if not self.is_producer:
             pass
+      
         # for
         # pass
+        # logger.info(f"apaci{layer_name = }")
         for req_id, meta in metadata.reqs_to_save.items():
             # logger.info(f"log:======> enter save kv for loop,{meta.remote_host = },{meta.remote_port = },{meta.local_block_ids = },{meta.remote_block_ids = },{meta.remote_engine_id = }")
             remote_engine_id = meta.remote_engine_id
@@ -1455,18 +1465,39 @@ class MoRIIOConnectorWorker:
             #     "Num local_block_ids: %s. Num remote_block_ids: %s. ", req_id,
             #     remote_engine_id, len(meta.local_block_ids),
             #     len(meta.remote_block_ids))
+            # TODO: mz get_remote_engine_id() for engine_id mapping.
+            # if remote_engine_id is  None:
+            #     remote_engine_id="1999"
+    
             if remote_engine_id not in self._remote_agents:
                 # Initiate handshake with remote engine to exchange metadata.
                 with self._handshake_lock:
                     if remote_engine_id not in self._remote_agents:
-                        self._background_nixl_handshake(req_id, remote_engine_id, meta)
+                        logger.info(f"*****background nixl {remote_engine_id = }")
+                        self._background_nixl_handshake(req_id, remote_engine_id, meta   )
+                      
                         # logger.info(f"zovlog:==============> _background_nixl_handshake launched!")
+                        # time.sleep(30)
                         continue
-            logger.info(f"log:======> remote agent {remote_engine_id} available, calling _write_blocks for req {req_id}")    
+            # logger.info(f"log:======> remote agent {remote_engine_id} available, calling _write_blocks for req {req_id}")    
             # Handshake already completed, start async read xfer.
-            self._write_blocks_for_req(req_id, meta, layer_name,kv_layer)
+            logger.info(f"sisi {layer_name = }")
 
-        #     pass
+            self._write_blocks_for_req(req_id, meta, layer_name,kv_layer)
+            
+            
+        while True:
+            if self._ready_requests.empty() and not self.write_kv_flag: # 第一次进入,需要一直等待
+                # logger.info(f"zovlog:==============> {self._ready_requests.empty() = }")
+                pass
+            elif not self._ready_requests.empty() and self.write_kv_flag:
+                # logger.info(f"zovlog:==============> {self._ready_requests.empty() = }")
+                self._write_blocks_for_req(*self._ready_requests.get_nowait(),layer_name,kv_layer)
+                break
+            else:
+                break
+
+            pass
     
     def start_load_kv(self, metadata: MoRIIOConnectorMetadata):
         """
@@ -1549,21 +1580,29 @@ class MoRIIOConnectorWorker:
         
         layerwise=True
         logger.info(f"mymy {layer_name = }")
+       
         use_batch=True
         if not self.builded_write_session:
-            for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
-                stride = self.kv_caches[layer_name].stride()
+            for layer_namekk,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
+                stride = self.kv_caches[layer_namekk].stride()
                 # logger.info(f"mapping {layer_name} local memory {local_kv_cache_metadata[0]}, remote memory {self.layer_name_to_remote_kv_cache_metadata[layer_name][0]}")
 
                 self.moriio_wrapper.set_local_memory_metadata(local_kv_cache_metadata[0])
-                self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_name][0])
+                self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_namekk][0])
                 self.moriio_wrapper.build_session()
             self.builded_write_session=True
-        
+        logger.info(f"coco {layer_name = }")
+
         layername_0=list(self.layer_name_to_local_kv_cache_metadata.items())[0][0]
         layername_5=list(self.layer_name_to_local_kv_cache_metadata.items())[5][0]
-        logger.info(f"!!)){layer_name= },  tensor:{layername_0=}:{self.kv_caches[layername_0].sum() = }")
-        logger.info(f"!!)){layer_name= },  tensor:{layername_5=}:{self.kv_caches[layername_5].sum() = }")
+        # logger.info(f"!!)){layer_name= },  tensor:{layername_0=}:{self.kv_caches[layername_0].sum() = }")
+        # logger.info(f"!!)){layer_name= },  tensor:{layername_5=}:{self.kv_caches[layername_5].sum() = }")
+        
+        # ...existing code...
+        self.debug_cache.append((layer_name, (self.kv_caches[layer_name][:,local_block_ids[0],:,:,:].sum())))
+# ...existing code...
+        if (len(self.debug_cache)-26)%27==0:
+                c=0
         if layerwise:
             _,blknum,blksize,hn,hs = self.kv_cache_shape
             sess_idx = list(self.layer_name_to_local_kv_cache_metadata.keys()).index(layer_name)
@@ -1827,9 +1866,12 @@ class MoRIIOConnectorWorker:
         al=[]
         bl=[]
         cl=[]
-        sl=[]
+        sl=[] #26+27*n
         for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
-            
+            self.debug_cache.append((layer_name, (self.kv_caches[layer_name][:,local_block_ids[0],:,:,:].sum())))
+            if (len(self.debug_cache)-26)%27==0: 
+                c=0
+            continue
             # logger.error(f"zovlog:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
             stride = self.kv_caches[layer_name].stride()
             # self.moriio_wrapper.set_local_memory_metadata(local_kv_cache_metadata[0])
