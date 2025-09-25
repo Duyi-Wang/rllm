@@ -49,7 +49,21 @@ ReqId = str
 GET_META_MSG = b"get_meta_msg"
 POP_DONE_RECV = b"pop_done_recv"
 OVER = b"OVER"
+from enum import Enum  # 添加这行
 
+class ROLE(Enum):
+    PRODUCER = "producer"
+    CONSUMER = "consumer"
+    NOTINIT = "notinit"
+GLOBAL_ROLE=ROLE.NOTINIT
+
+
+class MoRIIOMode(Enum):
+    READ = "read"
+    WRITE = "write"
+
+# 全局模式变量
+GLOBAL_MORIIO_MODE = MoRIIOMode.WRITE
 logger = init_logger(__name__)
 
 # Lazy import nixl_wrapper to avoid loading nixl_bindings if nixl is not used
@@ -81,6 +95,7 @@ class MoRIIOWrapper():
         self.notify_sock = None
         self.lock = threading.Lock()
         self.done_req_ids = []
+        self.done_write_cache_req_ids = []
         self.notify_thread = None
         self.sock = None
         self.tp_rank = get_tensor_model_parallel_rank()
@@ -202,8 +217,7 @@ class MoRIIOWrapper():
                 raise
             
 
-    def async_wait_D_finish_reqid(self):
-        # 仅P节点执行
+    def async_wait_reqid(self):
         # assert self.remote_engine_ip is not None,"remote engine ip is None!"
         # if self.tp_rank!=0:
         #     pass
@@ -215,20 +229,28 @@ class MoRIIOWrapper():
             host = "*"
             path = make_zmq_path("tcp", host, self.notify_port)
             with zmq_ctx(zmq.ROUTER, path) as sock:
-                # logger.info(f"zovlog:async async_wait_D_finish_reqid launched!!!!!!!!!!! listen:{path}")
+                # logger.info(f"zovlog:async async_wait_reqid launched!!!!!!!!!!! listen:{path}")
                 while True:
                     identity, msg = sock.recv_multipart()
                     msg = msg.decode("UTF-8")
                     logger.info(f"zovlog:P received red id {msg}")
                     if not msg.startswith("cmpl"):
                         assert 0,"P instance received error req id data"
-                    with self.lock:
-                        self.done_req_ids.append(msg)
+                    if GLOBAL_ROLE==ROLE.PRODUCER:
+                        # P节点执行
+                        with self.lock:
+                            self.done_req_ids.append(msg)
+                    # D节点执行
+                    elif GLOBAL_ROLE==ROLE.CONSUMER:
+                        with self.lock:
+                            self.done_write_cache_req_ids.append(msg)
+                    else:
+                        assert 0,"GLOBAL_ROLE is not set correctly!"
         self.notify_thread = threading.Thread(target=_async_wait,daemon=True)
         self.notify_thread.start()
         
     
-    def send_notify_to_P(self,req_ids):
+    def send_notify(self,req_ids):
         # logger.info(f"zovlog: enter sending notify to P...req_ids = {req_ids}")
         # if self.tp_rank!=0:
         #     pass
@@ -261,6 +283,12 @@ class MoRIIOWrapper():
             done_send = set(self.done_req_ids)
             self.done_req_ids = []
         return done_send
+    def pop_finished_write_req_ids(self):
+        # D 节点调用
+        with self.lock:
+            done_write_cache = set(self.done_write_cache_req_ids)
+            # self.done_write_cache_req_ids = []
+        return done_write_cache
 
     
 
@@ -473,23 +501,28 @@ class MoRIIOConnectorScheduler:
         
         # logger.info(f"zovlog:==============> call get_num_new_matched_tokens,{request.kv_transfer_params = }")
         params = request.kv_transfer_params
-        logger.debug(
-            "NIXLConnector get_num_new_matched_tokens: "
-            "num_computed_tokens=%s, kv_transfer_params=%s",
-            num_computed_tokens, params)
-        return len(request.prompt_token_ids) - 1 - num_computed_tokens,False
-    
-        if params is not None and params.get("do_remote_prefill"):
-            # Remote prefill: get all prompt blocks from remote.
-            assert num_computed_tokens % self.block_size == 0
-            rounded_num_prompt_tokens = round_down(len(request.prompt_token_ids), self.block_size)
-            # rounded_num_prompt_tokens = len(request.prompt_token_ids)
-            count = max(rounded_num_prompt_tokens - num_computed_tokens, 0)
-            logger.info(f"zovlog:===============> call get_num_new_matched_tokens,{len(request.prompt_token_ids) = },{self.block_size = },{round_down(len(request.prompt_token_ids), self.block_size) = },{num_computed_tokens = },{count = }")
-            # if count > 0:
-            #     return count,False
-            if count > 0:
-                return count, True
+        # logger.debug(
+        #     "NIXLConnector get_num_new_matched_tokens: "
+        #     "num_computed_tokens=%s, kv_transfer_params=%s",
+        #     num_computed_tokens, params) #TODO mingzhi write
+        if GLOBAL_MORIIO_MODE == MoRIIOMode.WRITE:
+            # MoriiO in write mode, no remote prefill
+           
+            return len(request.prompt_token_ids) - 1 - num_computed_tokens,True
+
+        else: 
+            return len(request.prompt_token_ids) - 1 - num_computed_tokens,False
+        # if params is not None and params.get("do_remote_prefill"):
+        #     # Remote prefill: get all prompt blocks from remote.
+        #     assert num_computed_tokens % self.block_size == 0
+        #     rounded_num_prompt_tokens = round_down(len(request.prompt_token_ids), self.block_size)
+        #     # rounded_num_prompt_tokens = len(request.prompt_token_ids)
+        #     count = max(rounded_num_prompt_tokens - num_computed_tokens, 0)
+        #     logger.info(f"zovlog:===============> call get_num_new_matched_tokens,{len(request.prompt_token_ids) = },{self.block_size = },{round_down(len(request.prompt_token_ids), self.block_size) = },{num_computed_tokens = },{count = }")
+        #     # if count > 0:
+        #     #     return count,False
+        #     if count > 0:
+        #         return count, True
 
         # No remote prefill for this request.
         return 0, False
@@ -646,7 +679,10 @@ class MoRIIOConnectorWorker:
         self.block_size = vllm_config.cache_config.block_size
         self.kv_transfer_config = vllm_config.kv_transfer_config
         self.is_producer = self.kv_transfer_config.is_kv_producer
-
+        if self.is_producer:
+            GLOBAL_ROLE=ROLE.PRODUCER
+        else: 
+            GLOBAL_ROLE=ROLE.CONSUMER
         # mori engine
         self._rank = get_world_group().rank 
         self._local_rank = get_world_group().local_rank 
@@ -1396,8 +1432,10 @@ class MoRIIOConnectorWorker:
             done_recving = set()
             # logger.info(f"zovog:======> call get_finished,my role = P done_sending = {done_sending}")
         else:
+            if GLOBAL_MORIIO_MODE==MoRIIOMode.WRITE:
+                self.moriio_wrapper.async_wait_reqid()
             # logger.info(f"zovog:======> call get_finished,my role = D")
-            done_sending, done_recving = set(), set()
+            done_sending, done_recving = set(), self.moriio_wrapper.pop_finished_write_req_ids()
         return done_sending, done_recving
 
     def _get_new_notifs(self) -> set[str]:
@@ -1507,7 +1545,7 @@ class MoRIIOConnectorWorker:
         We check for these trnxs to complete in each step().
         """
         if self.is_producer:
-            self.moriio_wrapper.async_wait_D_finish_reqid()
+            self.moriio_wrapper.async_wait_reqid()
             return
         # time.sleep(5)
         # logger.info(f"zovlog:======> start load kv,{metadata.reqs_to_recv.items() = }")
@@ -1549,7 +1587,7 @@ class MoRIIOConnectorWorker:
         self._reqs_to_send.update(metadata.reqs_to_send)
         for req_id, _ in metadata.reqs_to_recv.items():
             # logger.info(f"zovlog: send {req_id} to notify ")
-            self.moriio_wrapper.send_notify_to_P(req_id)
+            self.moriio_wrapper.send_notify(req_id)
 
     def _read_blocks_for_req(self, req_id: str, meta: ReqMeta):
         logger.debug(
@@ -1579,7 +1617,8 @@ class MoRIIOConnectorWorker:
                      kv_layer: torch.Tensor):
         # pass
         # TODO  self._handshake_futures[eid]
-        
+        if GLOBAL_MORIIO_MODE==MoRIIOMode.READ:
+            return
         layerwise=True
         logger.info(f"mymy {layer_name = }")
        
@@ -1669,6 +1708,7 @@ class MoRIIOConnectorWorker:
                     # time.sleep(0.1)
 
                 self.moriio_wrapper.waiting_for_read_complete()
+                self.moriio_wrapper.send_notify(request_id)
 
         elif not layerwise:
         
@@ -1873,7 +1913,12 @@ class MoRIIOConnectorWorker:
             self.debug_cache.append((layer_name, (self.kv_caches[layer_name][:,local_block_ids[0],:,:,:].sum())))
             if (len(self.debug_cache)-26)%27==0: 
                 c=0
-            continue
+            # use read mode to check
+            for idx,local_blkid in enumerate(local_block_ids):
+                assert(local_blkid==remote_block_ids[idx])
+
+            if GLOBAL_MORIIO_MODE == MoRIIOMode.WRITE:
+                continue
             # logger.error(f"zovlog:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
             stride = self.kv_caches[layer_name].stride()
             # self.moriio_wrapper.set_local_memory_metadata(local_kv_cache_metadata[0])
