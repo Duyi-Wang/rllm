@@ -229,7 +229,7 @@ class MoRIIOWrapper():
             host = "*"
             path = make_zmq_path("tcp", host, self.notify_port)
             with zmq_ctx(zmq.ROUTER, path) as sock:
-                # logger.info(f"zovlog:async async_wait_reqid launched!!!!!!!!!!! listen:{path}")
+                logger.info(f"zovlog:async async_wait_reqid launched!!!!!!!!!!! listen:{path}")
                 while True:
                     identity, msg = sock.recv_multipart()
                     msg = msg.decode("UTF-8")
@@ -241,11 +241,14 @@ class MoRIIOWrapper():
                         with self.lock:
                             self.done_req_ids.append(msg)
                     # D节点执行
-                    elif GLOBAL_ROLE==ROLE.CONSUMER:
-                        with self.lock:
-                            self.done_write_cache_req_ids.append(msg)
                     else:
-                        assert 0,"GLOBAL_ROLE is not set correctly!"
+                    # elif GLOBAL_ROLE==ROLE.CONSUMER:
+                        with self.lock:
+                            logger.info(f"zovlog:D received write cache complete req id {msg}")
+                            self.done_write_cache_req_ids.append(msg)
+                    # else:
+                    #     assert 0,"GLOBAL_ROLE is not set correctly!"
+                    # TODO 没init前就send了？
         self.notify_thread = threading.Thread(target=_async_wait,daemon=True)
         self.notify_thread.start()
         
@@ -273,7 +276,7 @@ class MoRIIOWrapper():
             # with zmq_ctx(zmq.DEALER, path) as sock:
         for req in req_ids_:
             assert isinstance(req,str)
-            # print(f"zovlog: sending notify to P...req_ids_ = {req_ids_},path = {path}")
+            print(f"zovlog: sending notify to P...req_ids_ = {req_ids_},path = {path}")
             self.sock.send(req.encode("utf-8"))
             # print(f"zovlog: sending notify to P finished")
     
@@ -286,8 +289,10 @@ class MoRIIOWrapper():
     def pop_finished_write_req_ids(self):
         # D 节点调用
         with self.lock:
+            if len(self.done_write_cache_req_ids)!=0:
+                c=0
             done_write_cache = set(self.done_write_cache_req_ids)
-            # self.done_write_cache_req_ids = []
+            self.done_write_cache_req_ids = []
         return done_write_cache
 
     
@@ -425,6 +430,9 @@ class MoRIIOConnector(KVConnectorBase_V1):
 
     def start_load_kv(self, forward_context: "ForwardContext",
                       **kwargs) -> None:
+        if GLOBAL_MORIIO_MODE==MoRIIOMode.WRITE:
+            if GLOBAL_ROLE==ROLE.CONSUMER:
+                self.connector_worker.moriio_wrapper.async_wait_reqid()
         st = time.perf_counter()
         assert self.connector_worker is not None
         assert isinstance(self._connector_metadata, MoRIIOConnectorMetadata)
@@ -1215,7 +1223,7 @@ class MoRIIOConnectorWorker:
             name="nixl_handshake_listener")
         self._nixl_handshake_listener_t.start()
         ready_event.wait()  # Wait for listener ZMQ socket to be ready.
-
+        self.moriio_wrapper.async_wait_reqid()
 
    
         '''
@@ -1489,7 +1497,7 @@ class MoRIIOConnectorWorker:
     
     def save_kv_layer(self, metadata: MoRIIOConnectorMetadata,layer_name: str, kv_layer: torch.Tensor,
                       attn_metadata: "AttentionMetadata", **kwargs):
-        logger.info(f"kuqi{layer_name = }")
+        # logger.info(f"kuqi{layer_name = }")
 
         if not self.is_producer:
             pass
@@ -1521,7 +1529,7 @@ class MoRIIOConnectorWorker:
                         continue
             # logger.info(f"log:======> remote agent {remote_engine_id} available, calling _write_blocks for req {req_id}")    
             # Handshake already completed, start async read xfer.
-            logger.info(f"sisi {layer_name = }")
+            # logger.info(f"sisi {layer_name = }")
 
             self._write_blocks_for_req(req_id, meta, layer_name,kv_layer)
             
@@ -1620,7 +1628,7 @@ class MoRIIOConnectorWorker:
         if GLOBAL_MORIIO_MODE==MoRIIOMode.READ:
             return
         layerwise=True
-        logger.info(f"mymy {layer_name = }")
+        # logger.info(f"mymy {layer_name = }")
        
         use_batch=True
         if not self.builded_write_session:
@@ -1708,8 +1716,11 @@ class MoRIIOConnectorWorker:
                     # time.sleep(0.1)
 
                 self.moriio_wrapper.waiting_for_read_complete()
+                logger.info(f"send notify to D")
                 self.moriio_wrapper.send_notify(request_id)
+                logger.info(f"send notify to D end")
 
+                b=0
         elif not layerwise:
         
             
@@ -1878,6 +1889,8 @@ class MoRIIOConnectorWorker:
         # logger.info(f"zovlog:========> start read blocks {local_block_ids = },{remote_block_ids = },{dst_engine_id = },{request_id = }")
         # return
         # 每一层的对应blkid都需要传输
+        if GLOBAL_MORIIO_MODE == MoRIIOMode.WRITE:
+                return 
         start = time.perf_counter()
 
         
