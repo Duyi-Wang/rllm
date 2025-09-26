@@ -516,10 +516,10 @@ class MoRIIOConnectorScheduler:
         if GLOBAL_MORIIO_MODE == MoRIIOMode.WRITE:
             # MoriiO in write mode, no remote prefill
            
-            return len(request.prompt_token_ids) - 1 - num_computed_tokens,True
+            return len(request.prompt_token_ids)  - num_computed_tokens,True
 
         else: 
-            return len(request.prompt_token_ids) - 1 - num_computed_tokens,False
+            return len(request.prompt_token_ids)  - num_computed_tokens,False
         # if params is not None and params.get("do_remote_prefill"):
         #     # Remote prefill: get all prompt blocks from remote.
         #     assert num_computed_tokens % self.block_size == 0
@@ -578,7 +578,9 @@ class MoRIIOConnectorScheduler:
                         "Got invalid KVTransferParams: %s. This "
                         "request will not utilize KVTransfer", params)
             else:
-                assert num_external_tokens == 0
+                #TODO  for read mode and push mode
+                pass
+                # assert num_external_tokens == 0f
             # Only trigger 1 KV transfer per request.
             params["do_remote_prefill"] = False
 
@@ -1537,7 +1539,8 @@ class MoRIIOConnectorWorker:
         while True:
             if self._ready_requests.empty() and not self.write_kv_flag: # 第一次进入,需要一直等待
                 # logger.info(f"zovlog:==============> {self._ready_requests.empty() = }")
-                pass
+                # pass
+                return 
             elif not self._ready_requests.empty() and self.write_kv_flag:
                 # logger.info(f"zovlog:==============> {self._ready_requests.empty() = }")
                 self._write_blocks_for_req(*self._ready_requests.get_nowait(),layer_name,kv_layer)
@@ -1552,6 +1555,7 @@ class MoRIIOConnectorWorker:
         Start loading by triggering non-blocking nixl_xfer.
         We check for these trnxs to complete in each step().
         """
+        print("start load kv")
         if self.is_producer:
             self.moriio_wrapper.async_wait_reqid()
             return
@@ -1577,16 +1581,18 @@ class MoRIIOConnectorWorker:
             self._read_blocks_for_req(req_id, meta)
         # Start transfers for requests whose handshakes have now finished.
 
-        while True:
-            if self._ready_requests.empty() and not self.load_kv_flag: # 第一次进入,需要一直等待
-                # logger.info(f"zovlog:==============> {self._ready_requests.empty() = }")
-                pass
-            elif not self._ready_requests.empty() and self.load_kv_flag:
-                # logger.info(f"zovlog:==============> {self._ready_requests.empty() = }")
-                self._read_blocks_for_req(*self._ready_requests.get_nowait())
-                break
-            else:
-                break
+        if GLOBAL_MORIIO_MODE==MoRIIOMode.READ:
+        
+            while True: #TODO
+                if self._ready_requests.empty() and not self.load_kv_flag: # 第一次进入,需要一直等待
+                    # logger.info(f"zovlog:==============> {self._ready_requests.empty() = }")
+                    return 
+                elif not self._ready_requests.empty() and self.load_kv_flag:
+                    # logger.info(f"zovlog:==============> {self._ready_requests.empty() = }")
+                    self._read_blocks_for_req(*self._ready_requests.get_nowait())
+                    break
+                else:
+                    break
 
         # while not self._ready_requests.empty():
         #     self._read_blocks_for_req(*self._ready_requests.get_nowait())
@@ -1886,9 +1892,10 @@ class MoRIIOConnectorWorker:
                      remote_block_ids: list[int], 
                      dst_engine_id: str,
                      request_id: str):
-        # logger.info(f"zovlog:========> start read blocks {local_block_ids = },{remote_block_ids = },{dst_engine_id = },{request_id = }")
+        logger.info(f"zovlog:========> start read blocks {local_block_ids = },{remote_block_ids = },{dst_engine_id = },{request_id = }")
         # return
         # 每一层的对应blkid都需要传输
+        
         if GLOBAL_MORIIO_MODE == MoRIIOMode.WRITE:
                 return 
         start = time.perf_counter()
