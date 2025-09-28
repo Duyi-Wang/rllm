@@ -253,12 +253,14 @@ class MoRIIOWrapper():
         self.notify_thread.start()
         
     
-    def send_notify(self,req_ids):
+    def send_notify(self,req_ids,meta=None):
         # logger.info(f"zovlog: enter sending notify to P...req_ids = {req_ids}")
         # if self.tp_rank!=0:
         #     pass
         # return 
-        assert self.remote_engine_ip is not None,"remote engine ip is None!"
+        #TODO this should be assert 
+        if self.remote_engine_ip is  None:
+            self.remote_engine_ip=meta.remote_host
         assert self.notify_port is not None,"remote engine port is not None!"
         if not isinstance(req_ids,list):
             req_ids_ = [req_ids]
@@ -549,6 +551,8 @@ class MoRIIOConnectorScheduler:
         # logger.info(
             # f"moriioConnector update_state_after_alloc: "
             # f"num_external_tokens={num_external_tokens}, kv_transfer_params={params},{params.get("do_remote_prefill") = },{params.get("remote_block_ids") = }")
+        
+        # if GLOBAL_MORIIO_MODE == MoRIIOMode.READ:
         if params is not None and params.get("do_remote_prefill"):
             if remote_block_ids := params.get("remote_block_ids"):
                 if all(p in params for p in ("remote_engine_id", "remote_host",
@@ -582,6 +586,7 @@ class MoRIIOConnectorScheduler:
                 pass
                 # assert num_external_tokens == 0f
             # Only trigger 1 KV transfer per request.
+            #这里可能是  那个get_mun_new_matched_tokens，为了显存允许decode做一点prefill
             params["do_remote_prefill"] = False
 
     def build_connector_meta(
@@ -590,6 +595,19 @@ class MoRIIOConnectorScheduler:
     ) -> KVConnectorMetadata:
         meta = MoRIIOConnectorMetadata()
 
+        if GLOBAL_MORIIO_MODE==MoRIIOMode.WRITE:
+        # when aysnc_load_kv finished, will add new reqs to scheduler_output.scheduled_new_reqs
+        # should I use thread to add new req in async_wait_reqid?
+            for new_req in scheduler_output.scheduled_new_reqs:
+                red_id=new_req.req_id
+                local_block_ids = list(new_req.block_ids)
+                kv_transfer_params = new_req.sampling_params.extra_args['kv_transfer_params']
+                meta.add_new_req(
+                    red_id,
+                    local_block_ids,
+                    kv_transfer_params,
+                )
+        # scheduler_output.scheduled_new_reqs[0].sampling_params.extra_args['kv_transfer_params']
         # Loop through scheduled reqs and convert to ReqMeta.
         for req_id, (req, block_ids) in self._reqs_need_recv.items():
             assert req.kv_transfer_params is not None
@@ -1446,6 +1464,9 @@ class MoRIIOConnectorWorker:
                 self.moriio_wrapper.async_wait_reqid()
             # logger.info(f"zovog:======> call get_finished,my role = D")
             done_sending, done_recving = set(), self.moriio_wrapper.pop_finished_write_req_ids()
+        
+        if len(done_recving)!=0:
+            p=0
         return done_sending, done_recving
 
     def _get_new_notifs(self) -> set[str]:
@@ -1502,8 +1523,9 @@ class MoRIIOConnectorWorker:
         # logger.info(f"kuqi{layer_name = }")
 
         if not self.is_producer:
-            pass
-      
+            return 
+
+        print(f"mama {layer_name} save kv")
         # for
         # pass
         # logger.info(f"apaci{layer_name = }")
@@ -1540,7 +1562,8 @@ class MoRIIOConnectorWorker:
             if self._ready_requests.empty() and not self.write_kv_flag: # 第一次进入,需要一直等待
                 # logger.info(f"zovlog:==============> {self._ready_requests.empty() = }")
                 # pass
-                return 
+                continue
+                # return 
             elif not self._ready_requests.empty() and self.write_kv_flag:
                 # logger.info(f"zovlog:==============> {self._ready_requests.empty() = }")
                 self._write_blocks_for_req(*self._ready_requests.get_nowait(),layer_name,kv_layer)
@@ -1561,38 +1584,41 @@ class MoRIIOConnectorWorker:
             return
         # time.sleep(5)
         # logger.info(f"zovlog:======> start load kv,{metadata.reqs_to_recv.items() = }")
+        wait_handshage_readd_req=False
         for req_id, meta in metadata.reqs_to_recv.items():
             # logger.info(f"zovlog:======> enter load kv for loop,{meta.remote_host = },{meta.remote_port = },{meta.local_block_ids = },{meta.remote_block_ids = },{meta.remote_engine_id = }")
             remote_engine_id = meta.remote_engine_id
-            logger.debug(
-                "start_load_kv for request %s from remote engine %s. "
-                "Num local_block_ids: %s. Num remote_block_ids: %s. ", req_id,
-                remote_engine_id, len(meta.local_block_ids),
-                len(meta.remote_block_ids))
+            # logger.debug(
+            #     "start_load_kv for request %s from remote engine %s. "
+            #     "Num local_block_ids: %s. Num remote_block_ids: %s. ", req_id,
+            #     remote_engine_id, len(meta.local_block_ids),
+            #     len(meta.remote_block_ids))
             if remote_engine_id not in self._remote_agents:
                 # Initiate handshake with remote engine to exchange metadata.
                 with self._handshake_lock:
                     if remote_engine_id not in self._remote_agents:
                         self._background_nixl_handshake(req_id, remote_engine_id, meta)
                         # logger.info(f"zovlog:==============> _background_nixl_handshake launched!")
+                        wait_handshage_readd_req=True
+
                         continue
                         
             # Handshake already completed, start async read xfer.
             self._read_blocks_for_req(req_id, meta)
         # Start transfers for requests whose handshakes have now finished.
 
-        if GLOBAL_MORIIO_MODE==MoRIIOMode.READ:
+        # if GLOBAL_MORIIO_MODE==MoRIIOMode.READ:
         
-            while True: #TODO
-                if self._ready_requests.empty() and not self.load_kv_flag: # 第一次进入,需要一直等待
-                    # logger.info(f"zovlog:==============> {self._ready_requests.empty() = }")
-                    return 
-                elif not self._ready_requests.empty() and self.load_kv_flag:
-                    # logger.info(f"zovlog:==============> {self._ready_requests.empty() = }")
-                    self._read_blocks_for_req(*self._ready_requests.get_nowait())
-                    break
-                else:
-                    break
+        while True: #TODO
+            if self._ready_requests.empty() and not self.load_kv_flag and wait_handshage_readd_req: # 第一次进入,需要一直等待
+                # logger.info(f"zovlog:==============> {self._ready_requests.empty() = }")
+                continue 
+            elif not self._ready_requests.empty() and self.load_kv_flag:
+                # logger.info(f"zovlog:==============> {self._ready_requests.empty() = }")
+                self._read_blocks_for_req(*self._ready_requests.get_nowait())
+                break
+            else:
+                break
 
         # while not self._ready_requests.empty():
         #     self._read_blocks_for_req(*self._ready_requests.get_nowait())
@@ -1601,7 +1627,7 @@ class MoRIIOConnectorWorker:
         self._reqs_to_send.update(metadata.reqs_to_send)
         for req_id, _ in metadata.reqs_to_recv.items():
             # logger.info(f"zovlog: send {req_id} to notify ")
-            self.moriio_wrapper.send_notify(req_id)
+            self.moriio_wrapper.send_notify(req_id,_)
 
     def _read_blocks_for_req(self, req_id: str, meta: ReqMeta):
         logger.debug(
@@ -1896,8 +1922,8 @@ class MoRIIOConnectorWorker:
         # return
         # 每一层的对应blkid都需要传输
         
-        if GLOBAL_MORIIO_MODE == MoRIIOMode.WRITE:
-                return 
+        # if GLOBAL_MORIIO_MODE == MoRIIOMode.WRITE:
+        #         return 
         start = time.perf_counter()
 
         
@@ -1933,12 +1959,14 @@ class MoRIIOConnectorWorker:
             self.debug_cache.append((layer_name, (self.kv_caches[layer_name][:,local_block_ids[0],:,:,:].sum())))
             if (len(self.debug_cache)-26)%27==0: 
                 c=0
+                
+            if GLOBAL_MORIIO_MODE == MoRIIOMode.WRITE:
+                continue
             # use read mode to check
             for idx,local_blkid in enumerate(local_block_ids):
                 assert(local_blkid==remote_block_ids[idx])
 
-            if GLOBAL_MORIIO_MODE == MoRIIOMode.WRITE:
-                continue
+           
             # logger.error(f"zovlog:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
             stride = self.kv_caches[layer_name].stride()
             # self.moriio_wrapper.set_local_memory_metadata(local_kv_cache_metadata[0])
