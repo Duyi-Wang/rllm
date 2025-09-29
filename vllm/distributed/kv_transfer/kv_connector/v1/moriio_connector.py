@@ -609,7 +609,7 @@ class MoRIIOConnectorScheduler:
             "type": "remote_blocks"
         }
         serialized_data = msgpack.dumps(data)
-        logger.info(f"zovlog: sending notify with data to P...req_id = {req_id}, int_list = {int_list}, path = {path}")
+        logger.info(f"zovlog: sending notify with data to P...req_id = {req_id}, , path = {path}")
         self.sock.send(serialized_data)
     def update_state_after_alloc(self, request: "Request", # 包含remote使用到的blockid
                                  blocks: "KVCacheBlocks", # local 分配好的blockid
@@ -1732,7 +1732,12 @@ class MoRIIOConnectorWorker:
         if layer_name == list(self.kv_caches.keys())[-1]:
             return True
         return False
-        
+    def _is_first_layer(self, layer_name):
+        if layer_name == list(self.kv_caches.keys())[0]:
+            return True
+        return False
+    def this_layer_write_meta_offset(self):
+        return self.merged_local, self.merged_remote, self.merged_sizes
     def _write_blocks(self, 
                      local_block_ids: list[int],
                      remote_block_ids: list[int], 
@@ -1798,34 +1803,34 @@ class MoRIIOConnectorWorker:
             transfer_size_byte=blksize * hn * hs * sz
             # remote_block_ids=local_block_ids
 
-            
-        
-                
-            for idx,local_blkid in enumerate(local_block_ids):
-                offset_k_local = sz * (0 * stride[0] + local_blkid * stride[1])
-                offset_v_local = sz* (1 * stride[0] + local_blkid * stride[1])
-                offset_k_remote = sz * (0 * stride[0] + remote_block_ids[idx] * stride[1])
-                offset_v_remote = sz * (1 * stride[0] + remote_block_ids[idx] * stride[1])
-                offset_local.append(offset_v_local)
-                offset_remote.append(offset_v_remote)
-                transfer_sizes.append(transfer_size_byte)
+            #TODO GPT-oss etc case
+            if self._is_first_layer(layer_name):
+                for idx,local_blkid in enumerate(local_block_ids):
+                    offset_k_local = sz * (0 * stride[0] + local_blkid * stride[1])
+                    offset_v_local = sz* (1 * stride[0] + local_blkid * stride[1])
+                    offset_k_remote = sz * (0 * stride[0] + remote_block_ids[idx] * stride[1])
+                    offset_v_remote = sz * (1 * stride[0] + remote_block_ids[idx] * stride[1])
+                    offset_local.append(offset_v_local)
+                    offset_remote.append(offset_v_remote)
+                    transfer_sizes.append(transfer_size_byte)
 
-            
-                offset_local.append(offset_k_local)
-                offset_remote.append(offset_k_remote)
-                transfer_sizes.append(transfer_size_byte)
-        
-
-                if not use_batch:
-                    pass
                 
-                #[1,2], [2,5].
-                    # self.moriio_wrapper.read_remote_data_s(transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
-                    # self.moriio_wrapper.read_remote_data_s(transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
-                    print("!!!!",transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
-                    print("!!!!",transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
-            a,b,c=self.merge_contiguous_blocks(offset_local,offset_remote,transfer_sizes)
+                    offset_local.append(offset_k_local)
+                    offset_remote.append(offset_k_remote)
+                    transfer_sizes.append(transfer_size_byte)
             
+
+                    if not use_batch:
+                        pass
+                    
+                    #[1,2], [2,5].
+                        # self.moriio_wrapper.read_remote_data_s(transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
+                        # self.moriio_wrapper.read_remote_data_s(transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
+                        print("!!!!",transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
+                        print("!!!!",transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
+                    self.merged_local, self.merged_remote, self.merged_sizes=self.merge_contiguous_blocks(offset_local,offset_remote,transfer_sizes)
+            
+            a,b,c=self.this_layer_write_meta_offset()
             if use_batch:
                 # self.moriio_wrapper.read_remote_data(transfer_sizes,offset_local, offset_remote,sess_idx)
                 
@@ -2028,10 +2033,10 @@ class MoRIIOConnectorWorker:
 
         
         
-        layername_0=list(self.layer_name_to_local_kv_cache_metadata.items())[0][0]
-        layername_5=list(self.layer_name_to_local_kv_cache_metadata.items())[5][0]
-        logger.info(f"!!))  tensor:{layername_0=}:{self.kv_caches[layername_0].sum() = }")
-        logger.info(f"!!))  tensor:{layername_5=}:{self.kv_caches[layername_5].sum() = }")
+        # layername_0=list(self.layer_name_to_local_kv_cache_metadata.items())[0][0]
+        # layername_5=list(self.layer_name_to_local_kv_cache_metadata.items())[5][0]
+        # logger.info(f"!!))  tensor:{layername_0=}:{self.kv_caches[layername_0].sum() = }")
+        # logger.info(f"!!))  tensor:{layername_5=}:{self.kv_caches[layername_5].sum() = }")
         if not self.builded_session:
             for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
                 # logger.info(f"session map:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
