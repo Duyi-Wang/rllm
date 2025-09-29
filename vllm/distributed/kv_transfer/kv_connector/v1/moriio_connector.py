@@ -95,6 +95,8 @@ class MoRIIOWrapper():
         self.notify_sock = None
         self.lock = threading.Lock()
         self.done_req_ids = []
+        self.done_remote_allocate_req = []
+        self.done_remote_allocate_req_dict: dict[str, list[int]] = {}
         self.done_write_cache_req_ids = []
         self.notify_thread = None
         self.sock = None
@@ -232,20 +234,47 @@ class MoRIIOWrapper():
                 logger.info(f"zovlog:async async_wait_reqid launched!!!!!!!!!!! listen:{path}")
                 while True:
                     identity, msg = sock.recv_multipart()
-                    msg = msg.decode("UTF-8")
-                    logger.info(f"zovlog:P received red id {msg}")
-                    if not msg.startswith("cmpl"):
-                        assert 0,"P instance received error req id data"
-                    if GLOBAL_ROLE==ROLE.PRODUCER:
-                        # P节点执行
-                        with self.lock:
-                            self.done_req_ids.append(msg)
-                    # D节点执行
-                    else:
-                    # elif GLOBAL_ROLE==ROLE.CONSUMER:
-                        with self.lock:
-                            logger.info(f"zovlog:D received write cache complete req id {msg}")
-                            self.done_write_cache_req_ids.append(msg)
+                    
+                    try:
+                        # 尝试反序列化为结构化数据
+                        data = msgpack.loads(msg)
+                        
+                        if isinstance(data, dict) and "req_id" in data:
+                            req_id = data["req_id"]
+                            int_list = data.get("int_list", [])
+                            msg_type = data.get("type", "unknown")
+                            
+                            logger.info(f"zovlog:P received remote block msg: req_id={req_id}, int_list={int_list}, type={msg_type}")
+                            
+                            # 处理结构化消息 #TODO 修复初始化的问题
+                            # if GLOBAL_ROLE == ROLE.PRODUCER:
+                            with self.lock:
+                                # 可以同时存储req_id和int_list
+                                self.done_remote_allocate_req.append(req_id)
+                                self.done_remote_allocate_req_dict[req_id] = int_list
+                                b=0
+                            # else:
+                            #     assert False,"Only P node should receive this type of message!"
+                                
+                    except (msgpack.exceptions.ExtraData, msgpack.exceptions.UnpackException):
+                    
+                        
+                        msg = msg.decode("UTF-8")
+                        logger.info(f"zovlog:P received red id {msg}")
+                        if  msg.startswith("cmpl"):
+                                # assert 0,"P instance received error req id data"
+                            if GLOBAL_ROLE==ROLE.PRODUCER:
+                                # P节点执行   
+                                with self.lock:  #可以释放page
+                                    self.done_req_ids.append(msg)
+                            # D节点执行
+                            else:
+                            # elif GLOBAL_ROLE==ROLE.CONSUMER:
+                                with self.lock:   
+                                    logger.info(f"zovlog:D received write cache complete req id {msg}")
+                                    self.done_write_cache_req_ids.append(msg)
+                    
+                    
                     # else:
                     #     assert 0,"GLOBAL_ROLE is not set correctly!"
                     # TODO 没init前就send了？
@@ -253,6 +282,12 @@ class MoRIIOWrapper():
         self.notify_thread.start()
         
     
+    
+ 
+    
+    
+    # 使用msgpack序列化
+  
     def send_notify(self,req_ids,meta=None):
         # logger.info(f"zovlog: enter sending notify to P...req_ids = {req_ids}")
         # if self.tp_rank!=0:
@@ -296,6 +331,12 @@ class MoRIIOWrapper():
             done_write_cache = set(self.done_write_cache_req_ids)
             self.done_write_cache_req_ids = []
         return done_write_cache
+    def pop_remote_allocate_req_dict(self):
+        # P 节点调用
+        with self.lock:
+            done_remote_allocate =set(self.done_remote_allocate_req)
+            self.done_remote_allocate_req= []
+        return done_remote_allocate
 
     
 
@@ -400,7 +441,7 @@ class MoRIIOConnector(KVConnectorBase_V1):
                                  num_external_tokens: int):
         assert self.connector_scheduler is not None
         return self.connector_scheduler.update_state_after_alloc(
-            request, blocks, num_external_tokens)
+            request, blocks, num_external_tokens,self.connector_worker)
 
     def build_connector_meta(
         self,
@@ -475,6 +516,11 @@ class MoRIIOConnectorScheduler:
             self.vllm_config.parallel_config.data_parallel_rank *
             self.vllm_config.parallel_config.tensor_parallel_size)
         logger.info(f"zovlog::==========> Initializing MoRIIO Scheduler {engine_id = },{self.side_channel_port = }")
+        
+        #todo , how to send with tp
+        self.side_notify_port = self.vllm_config.kv_transfer_config.kv_connector_extra_config['notify_port'] # envs.VLLM_NIXL_SIDE_CHANNEL_PORT +
+        
+         
         self.is_producer = vllm_config.kv_transfer_config.kv_role == "kv_producer"
         # self.gotted = False
         # Requests that need to start recv/send.
@@ -485,6 +531,7 @@ class MoRIIOConnectorScheduler:
 
         # Reqs to send and their expiration time
         self._reqs_need_send: dict[ReqId, float] = {}
+        self.sock = None
         self.is_producer = vllm_config.kv_transfer_config.kv_role == "kv_producer"
 
     def get_num_new_matched_tokens(
@@ -536,12 +583,39 @@ class MoRIIOConnectorScheduler:
 
         # No remote prefill for this request.
         return 0, False
+    def send_notify_block(self, req_id: str, int_list: list[int] = None,host=None,port=None):
+        
+        # def, todo TP>1?
 
+        """发送req_id和int列表"""
+    #   /sz
+        
+    #     host = self.remote_engine_ip
+        path = make_zmq_path("tcp", host, port)
+        
+        if self.sock is None:
+            self.ctx = zmq.Context()
+            self.sock = make_zmq_socket(ctx=self.ctx,
+                            path=path,
+                            socket_type=zmq.DEALER,
+                            bind=False)
+        
+        # 构造要发送的数据结构
+        data = {
+            "req_id": req_id,
+            "int_list": int_list or [],
+            "type": "remote_blocks"
+        }
+        serialized_data = msgpack.dumps(data)
+        logger.info(f"zovlog: sending notify with data to P...req_id = {req_id}, int_list = {int_list}, path = {path}")
+        self.sock.send(serialized_data)
     def update_state_after_alloc(self, request: "Request", # 包含remote使用到的blockid
                                  blocks: "KVCacheBlocks", # local 分配好的blockid
-                                 num_external_tokens: int):
+                                 num_external_tokens: int,
+                                 connector_worker: Optional["MoRIIOConnectorWorker"]=None):
         
         params = request.kv_transfer_params # zovlog: params 是none
+        
         
         
         if params.get("do_remote_decode"):
@@ -554,36 +628,46 @@ class MoRIIOConnectorScheduler:
         
         # if GLOBAL_MORIIO_MODE == MoRIIOMode.READ:
         if params is not None and params.get("do_remote_prefill"):
-            if remote_block_ids := params.get("remote_block_ids"):
-                if all(p in params for p in ("remote_engine_id", "remote_host",
-                                             "remote_port")):
-                    # If remote_blocks and num_external_tokens = 0, we
-                    # a full prefix cache hit on the D worker. We need to call
-                    # send_notif in _read_blocks to free the memory on the P.
+            if GLOBAL_MORIIO_MODE==MoRIIOMode.READ:
+                if remote_block_ids := params.get("remote_block_ids"):
+                    if all(p in params for p in ("remote_engine_id", "remote_host",
+                                                "remote_port")):
+                        # If remote_blocks and num_external_tokens = 0, we
+                        # a full prefix cache hit on the D worker. We need to call
+                        # send_notif in _read_blocks to free the memory on the P.
 
-                    # local_block_ids = (blocks.get_unhashed_block_ids()
-                    #                    if num_external_tokens > 0 else [])
-                    # 临时修改测试,如果local分配的和remote的长度不一样,那么就说明只需要load remote的后面几个
-                    # Get unhashed blocks to pull from remote.
-                    local_block_ids = blocks.get_block_ids()[0]
-                    assert len(local_block_ids) <= len(remote_block_ids)
-                    if len(local_block_ids) == len(remote_block_ids):
-                        # 全部需要load,pass
-                        pass
+                        # local_block_ids = (blocks.get_unhashed_block_ids()
+                        #                    if num_external_tokens > 0 else [])
+                        # 临时修改测试,如果local分配的和remote的长度不一样,那么就说明只需要load remote的后面几个
+                        # Get unhashed blocks to pull from remote.
+                        local_block_ids = blocks.get_block_ids()[0]
+                        assert len(local_block_ids) <= len(remote_block_ids)
+                        if len(local_block_ids) == len(remote_block_ids):
+                            # 全部需要load,pass
+                            pass
+                        else:
+                            # 只需要load prefix cacheing 未命中的部分
+                            local_block_ids = remote_block_ids[-len(local_block_ids):]
+                            # logger.info(f"zovlog:0827--------------> len(local_block_ids) < len(remote_block_ids),{local_block_ids = }")
+                        # logger.info(f"zovlog:0827 ------------> unhashed blocks = {local_block_ids}")
+                        self._reqs_need_recv[request.request_id] = (
+                            request, local_block_ids)
                     else:
-                        # 只需要load prefix cacheing 未命中的部分
-                        local_block_ids = remote_block_ids[-len(local_block_ids):]
-                        # logger.info(f"zovlog:0827--------------> len(local_block_ids) < len(remote_block_ids),{local_block_ids = }")
-                    # logger.info(f"zovlog:0827 ------------> unhashed blocks = {local_block_ids}")
-                    self._reqs_need_recv[request.request_id] = (
-                        request, local_block_ids)
+                        logger.warning(
+                            "Got invalid KVTransferParams: %s. This "
+                            "request will not utilize KVTransfer", params)
                 else:
-                    logger.warning(
-                        "Got invalid KVTransferParams: %s. This "
-                        "request will not utilize KVTransfer", params)
+                    #TODO  for read mode and push mode
+                    pass
             else:
-                #TODO  for read mode and push mode
-                pass
+                # MoriiO in write mode, do remote prefill(sonsumer)
+                # send block ids
+                #TODO , decode allocate wich times?
+                # send_no
+                b=0
+                self.send_notify_block(req_id=request.request_id,int_list=blocks.get_block_ids()[0],host=params.get("remote_host"),port=self.side_notify_port)
+                b=0
+            
                 # assert num_external_tokens == 0f
             # Only trigger 1 KV transfer per request.
             #这里可能是  那个get_mun_new_matched_tokens，为了显存允许decode做一点prefill
@@ -595,7 +679,7 @@ class MoRIIOConnectorScheduler:
     ) -> KVConnectorMetadata:
         meta = MoRIIOConnectorMetadata()
 
-        if GLOBAL_MORIIO_MODE==MoRIIOMode.WRITE:
+        if GLOBAL_MORIIO_MODE==MoRIIOMode.WRITE :
         # when aysnc_load_kv finished, will add new reqs to scheduler_output.scheduled_new_reqs
         # should I use thread to add new req in async_wait_reqid?
             for new_req in scheduler_output.scheduled_new_reqs:
@@ -1183,22 +1267,12 @@ class MoRIIOConnectorWorker:
             self.layer_name_to_local_kv_cache_metadata[layer_name].append(moriio_mem_metadata)
             
             
-            
-            
-            
-            
-            
-            
-            
-            
             self.local_kv_cache_size.append(cache.nelement() * cache.element_size())
             # logger.info(f"zovlog::===========> registered:{self.local_kv_cache_size[-1] = },{self.layer_name_to_local_kv_cache_metadata[layer_name][-1] = },{self.block_len = },{self.num_blocks = },{kv_cache.shape = },{block_shape = }")
 
 
         
        
-            
-            
             
             
         
@@ -1447,7 +1521,7 @@ class MoRIIOConnectorWorker:
         #         break
         #     del self._reqs_to_send[req_id]
         #     done_sending.add(req_id)
-        # done_sending, done_recving = set(), set()
+        done_sending, done_recving = set(), set()
         # done_recving = set()
         # done_sending = set(self.done_sending_reqs)
         # # since python<=3.13 has GIL,so now I just ignore multithread safty
@@ -1457,7 +1531,11 @@ class MoRIIOConnectorWorker:
         if self.is_producer:
             # logger.info(f"zovog:======> call get_finished,my role = P")
             done_sending = self.moriio_wrapper.pop_finished_req_ids()
-            done_recving = set()
+            if GLOBAL_MORIIO_MODE==MoRIIOMode.WRITE:
+            #     #need to recv block id from the remote 
+            #     done_recving = self.moriio_wrapper.pop_remote_allocate_req_dict() #get_block
+            # else:
+                done_recving = set()
             # logger.info(f"zovog:======> call get_finished,my role = P done_sending = {done_sending}")
         else:
             if GLOBAL_MORIIO_MODE==MoRIIOMode.WRITE:
@@ -1557,7 +1635,7 @@ class MoRIIOConnectorWorker:
 
             self._write_blocks_for_req(req_id, meta, layer_name,kv_layer)
             
-            
+      
         while True:
             if self._ready_requests.empty() and not self.write_kv_flag: # 第一次进入,需要一直等待
                 # logger.info(f"zovlog:==============> {self._ready_requests.empty() = }")
@@ -1657,6 +1735,14 @@ class MoRIIOConnectorWorker:
                      kv_layer: torch.Tensor):
         # pass
         # TODO  self._handshake_futures[eid]
+        
+        
+        while True:
+            if request_id in self.moriio_wrapper.done_remote_allocate_req:
+                remote_block_ids = self.moriio_wrapper.done_remote_allocate_req_dict[request_id]
+                self.moriio_wrapper.done_remote_allocate_req.pop(request_id)
+                self.moriio_wrapper.done_remote_allocate_req_dict.pop(request_id)
+                break
         if GLOBAL_MORIIO_MODE==MoRIIOMode.READ:
             return
         layerwise=True
@@ -1937,7 +2023,7 @@ class MoRIIOConnectorWorker:
                 # logger.info(f"session map:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
                 stride = self.kv_caches[layer_name].stride()
                 self.moriio_wrapper.set_local_memory_metadata(local_kv_cache_metadata[0])
-                logger.info(f"mapping {layer_name} local memory {local_kv_cache_metadata[0]}, remote memory {self.layer_name_to_remote_kv_cache_metadata[layer_name][0]}")
+                # logger.info(f"mapping {layer_name} local memory {local_kv_cache_metadata[0]}, remote memory {self.layer_name_to_remote_kv_cache_metadata[layer_name][0]}")
                 self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_name][0])
                 self.moriio_wrapper.build_session()
             self.builded_session=True
