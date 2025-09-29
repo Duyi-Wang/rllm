@@ -1740,9 +1740,12 @@ class MoRIIOConnectorWorker:
         while True:
             if request_id in self.moriio_wrapper.done_remote_allocate_req:
                 remote_block_ids = self.moriio_wrapper.done_remote_allocate_req_dict[request_id]
-                self.moriio_wrapper.done_remote_allocate_req.pop(request_id)
-                self.moriio_wrapper.done_remote_allocate_req_dict.pop(request_id)
+                # self.moriio_wrapper.done_remote_allocate_req.remove(request_id)
+                # self.moriio_wrapper.done_remote_allocate_req_dict.pop(request_id)
+                # TODO, finished了在pop
                 break
+            else:
+                b=0
         if GLOBAL_MORIIO_MODE==MoRIIOMode.READ:
             return
         layerwise=True
