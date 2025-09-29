@@ -481,7 +481,7 @@ class MoRIIOConnector(KVConnectorBase_V1):
         assert isinstance(self._connector_metadata, MoRIIOConnectorMetadata)
         self.connector_worker.start_load_kv(self._connector_metadata)
         en = time.perf_counter()
-        print(f"start_load_kv总时间{en - st} sec")
+        # print(f"start_load_kv总时间{en - st} sec")
 
     def wait_for_layer_load(self, layer_name: str) -> None:
         """NixlConnector does not do layerwise saving."""
@@ -1656,7 +1656,7 @@ class MoRIIOConnectorWorker:
         Start loading by triggering non-blocking nixl_xfer.
         We check for these trnxs to complete in each step().
         """
-        print("start load kv")
+        # print("start load kv")
         if self.is_producer:
             self.moriio_wrapper.async_wait_reqid()
             return
@@ -1785,7 +1785,7 @@ class MoRIIOConnectorWorker:
             transfer_sizes=[]
             sz=self.kv_caches[layer_name].element_size()
             transfer_size_byte=blksize * hn * hs * sz
-            remote_block_ids=local_block_ids
+            # remote_block_ids=local_block_ids
 
             
         
