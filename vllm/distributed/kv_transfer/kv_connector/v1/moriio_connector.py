@@ -90,6 +90,7 @@ class MoRIIOWrapper():
         self.local_memory_registered = False
         self.local_memory_metadata = None
         self.transfer_status = []
+        self.infilght_transfer_req_ids=[]
         self.remote_engine_ip = None
         self.notify_port = None
         self.notify_sock = None
@@ -244,7 +245,7 @@ class MoRIIOWrapper():
                             int_list = data.get("int_list", [])
                             msg_type = data.get("type", "unknown")
                             
-                            logger.info(f"zovlog:P received remote block msg: req_id={req_id}, int_list={int_list}, type={msg_type}")
+                            logger.info(f"zovlog:P received remote block msg: req_id={req_id}, type={msg_type}")
                             
                             # 处理结构化消息 #TODO 修复初始化的问题
                             # if GLOBAL_ROLE == ROLE.PRODUCER:
@@ -499,7 +500,8 @@ class MoRIIOConnector(KVConnectorBase_V1):
         
     def wait_for_save(self):
         """NixlConnector does not save explicitly."""
-        self.connector_worker.moriio_wrapper.waiting_for_read_complete()
+        
+        # self.connector_worker.moriio_wrapper.waiting_for_read_complete()
         pass
 
 
@@ -648,8 +650,8 @@ class MoRIIOConnectorScheduler:
                         else:
                             # 只需要load prefix cacheing 未命中的部分
                             local_block_ids = remote_block_ids[-len(local_block_ids):]
-                            # logger.info(f"zovlog:0827--------------> len(local_block_ids) < len(remote_block_ids),{local_block_ids = }")
-                        # logger.info(f"zovlog:0827 ------------> unhashed blocks = {local_block_ids}")
+                            # logger.info(f"zovlog:08--------------> len(local_block_ids) < len(remote_block_ids),{local_block_ids = }")
+                        # logger.info(f"zovlog:08 ------------> unhashed blocks = {local_block_ids}")
                         self._reqs_need_recv[request.request_id] = (
                             request, local_block_ids)
                     else:
@@ -1603,7 +1605,7 @@ class MoRIIOConnectorWorker:
         if not self.is_producer:
             return 
 
-        print(f"mama {layer_name} save kv")
+        # print(f"mama {layer_name} save kv")
         # for
         # pass
         # logger.info(f"apaci{layer_name = }")
@@ -1726,6 +1728,11 @@ class MoRIIOConnectorWorker:
             layer_name=layer_name,
             kv_layer=kv_layer
         )
+    def _is_last_layer(self, layer_name):
+        if layer_name == list(self.kv_caches.keys())[-1]:
+            return True
+        return False
+        
     def _write_blocks(self, 
                      local_block_ids: list[int],
                      remote_block_ids: list[int], 
@@ -1761,18 +1768,22 @@ class MoRIIOConnectorWorker:
                 self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_namekk][0])
                 self.moriio_wrapper.build_session()
             self.builded_write_session=True
-        logger.info(f"coco {layer_name = }")
+        # logger.info(f"coco {layer_name = }")
 
-        layername_0=list(self.layer_name_to_local_kv_cache_metadata.items())[0][0]
-        layername_5=list(self.layer_name_to_local_kv_cache_metadata.items())[5][0]
+        # layername_0=list(self.layer_name_to_local_kv_cache_metadata.items())[0][0]
+        # layername_5=list(self.layer_name_to_local_kv_cache_metadata.items())[5][0]
         # logger.info(f"!!)){layer_name= },  tensor:{layername_0=}:{self.kv_caches[layername_0].sum() = }")
         # logger.info(f"!!)){layer_name= },  tensor:{layername_5=}:{self.kv_caches[layername_5].sum() = }")
         
         # ...existing code...
-        self.debug_cache.append((layer_name, (self.kv_caches[layer_name][:,local_block_ids[0],:,:,:].sum())))
+        ###################################
+        # important debug code
+        # self.debug_cache.append((layer_name, (self.kv_caches[layer_name][:,local_block_ids[0],:,:,:].sum())))
 # ...existing code...
-        if (len(self.debug_cache)-26)%27==0:
-                c=0
+        # if (len(self.debug_cache)-26)%27==0:
+        #         c=0
+        ###################################
+
         if layerwise:
             _,blknum,blksize,hn,hs = self.kv_cache_shape
             sess_idx = list(self.layer_name_to_local_kv_cache_metadata.keys()).index(layer_name)
@@ -1833,7 +1844,7 @@ class MoRIIOConnectorWorker:
                     time.sleep(0.1)
                     # print("bbbb",c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
                     self.moriio_wrapper.write_remote_data_s(c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
-            if '27' in layer_name:
+            if self._is_last_layer(layer_name):
                     # time.sleep(0.1)
 
                 self.moriio_wrapper.waiting_for_read_complete()
@@ -1847,7 +1858,7 @@ class MoRIIOConnectorWorker:
             
             start = time.perf_counter()
            
-            if '27' not in layer_name:
+            if not self._is_last_layer(layer_name):
                 return
             _,blknum,blksize,hn,hs = self.kv_cache_shape
             # stride = [blknum*blksize*hn*hs   ,blksize*hs*hn   ,hs*hn   ,hs   ,1]
