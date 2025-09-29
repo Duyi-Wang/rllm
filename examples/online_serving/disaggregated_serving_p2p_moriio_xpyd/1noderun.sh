@@ -4,16 +4,16 @@ set -ex
 # export NCCL_SOCKET_IFNAME=ens50f0
 export GLOO_SOCKET_IFNAME=ens14np0
 export NCCL_SOCKET_IFNAME=ens14np0
-export CUDA_VISIBLE_DEVICES=0,1
-export HIP_VISIBLE_DEVICES=0,1
+export CUDA_VISIBLE_DEVICES=4,5
+export HIP_VISIBLE_DEVICES=4,5
 export VLLM_USE_V1=1 
 export VLLM_ROCM_USE_AITER=1 
 export VLLM_ENABLE_DSV3=0  
 export SAFETENSORS_FAST_GPU=1   
-export VLLM_TORCH_PROFILER_DIR=/nfs/users/mingzliu/vllm/examples/online_serving/disaggregated_serving_p2p_moriio_xpyd/zlogs
+export VLLM_TORCH_PROFILER_DIR=/home/mingzliu/0919_profile_logs
 
-vllm serve /nfs/data/Qwen3-32B \
-        -tp 2  \
+vllm serve /nfs/data/Qwen3-0.6B \
+        -tp 1  \
     --block-size 16 \
     --max_seq_len_to_capture 6144 \
     --max-num-batched-tokens 6144 \
@@ -21,7 +21,7 @@ vllm serve /nfs/data/Qwen3-32B \
     --port 40005 \
     --enforce-eager \
     --trust-remote-code \
-    --gpu-memory-utilization 0.5 \
+    --gpu-memory-utilization 0.6 \
     --disable-log-request \
     --served-model-name deepseek-ai/DeepSeek-R1 
     

@@ -6,8 +6,8 @@ set -ex
 export GLOO_SOCKET_IFNAME=ens14np0
 export NCCL_SOCKET_IFNAME=ens14np0
 
-export CUDA_VISIBLE_DEVICES=5,6
-export HIP_VISIBLE_DEVICES=5,6
+export CUDA_VISIBLE_DEVICES=6,7
+export HIP_VISIBLE_DEVICES=6,7
 # export    NCCL_IB_DISABLE=1
 # mkdir -p profiler
 # export VLLM_TORCH_PROFILER_DIR=./profiler
@@ -26,11 +26,11 @@ export VLLM_USE_V1=1
 export VLLM_ROCM_USE_AITER=1 
 export VLLM_ENABLE_DSV3=0  
 export SAFETENSORS_FAST_GPU=1   
-export VLLM_TORCH_PROFILER_DIR=/home/mingzliu/profile_logs
+export VLLM_TORCH_PROFILER_DIR=/nfs/users/mingzliu/vllm/examples/online_serving/disaggregated_serving_p2p_moriio_xpyd/write_0929
 export CUDA_PROFILE_ACTIVITIES="cuda"
 # export VLLM_TORCH_PROFILER_WITH_STACK=0
 # {
-vllm serve /nfs/data/Qwen3-32B \
+vllm serve /nfs/data/Qwen3-0.6B \
         -tp 1   \
         --block-size 16  \
         --max_seq_len_to_capture 6144 \
@@ -54,3 +54,4 @@ vllm serve /nfs/data/Qwen3-32B \
 # notify_port
 # for P instance: receive done req id from D instance use this port
 # for D instance: send done req id to P instance use this port
+#todo    1 merge 2notifyport 3 tp 4 queue write

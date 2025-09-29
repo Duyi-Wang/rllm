@@ -2023,10 +2023,11 @@ class MoRIIOConnectorWorker:
                      remote_block_ids: list[int], 
                      dst_engine_id: str,
                      request_id: str):
-        logger.info(f"zovlog:========> start read blocks {local_block_ids = },{remote_block_ids = },{dst_engine_id = },{request_id = }")
+        # logger.info(f"zovlog:========> start read blocks {local_block_ids = },{remote_block_ids = },{dst_engine_id = },{request_id = }")
         # return
         # 每一层的对应blkid都需要传输
-        
+        if GLOBAL_MORIIO_MODE==MoRIIOMode.WRITE:
+            return
         # if GLOBAL_MORIIO_MODE == MoRIIOMode.WRITE:
         #         return 
         start = time.perf_counter()
