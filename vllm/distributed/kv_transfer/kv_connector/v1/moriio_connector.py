@@ -1793,7 +1793,6 @@ class MoRIIOConnectorWorker:
             _,blknum,blksize,hn,hs = self.kv_cache_shape
             sess_idx = list(self.layer_name_to_local_kv_cache_metadata.keys()).index(layer_name)
             
-            start = time.perf_counter()
             local_kv_cache_metadata=self.layer_name_to_local_kv_cache_metadata[layer_name]
             stride = self.kv_caches[layer_name].stride()
             offset_local=[]
@@ -1828,7 +1827,7 @@ class MoRIIOConnectorWorker:
                         # self.moriio_wrapper.read_remote_data_s(transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
                         print("!!!!",transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
                         print("!!!!",transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
-                    self.merged_local, self.merged_remote, self.merged_sizes=self.merge_contiguous_blocks(offset_local,offset_remote,transfer_sizes)
+                self.merged_local, self.merged_remote, self.merged_sizes=self.merge_contiguous_blocks(offset_local,offset_remote,transfer_sizes)
             
             a,b,c=self.this_layer_write_meta_offset()
             if use_batch:
