@@ -85,7 +85,7 @@ def start_service_discovery(hostname, port):
 
 async def send_request_to_prefill(endpoint,req_data,request_id,p_endpoint,pip,pports):
     # print(f"zovlog:======> proxy {endpoint = }")
-    req_data_copy = copy.deepcopy(req_data)
+    req_data_copy = req_data
     
     # 本地做prefill,且decode只需要pull模式,所以prefill不需要在这里知晓远程decode任何信息
    
@@ -174,6 +174,10 @@ async def send_request_to_decode(endpoint,req_data,request_id):
 @app.route("/v1/chat/completions", methods=["POST"])
 async def handle_request():
     # print(f"zovlog:-----------> enter request")
+    
+    import time
+    
+    st1=time.perf_counter()
     global request_nums
     extract_ip_port = lambda url: re.search(r'//(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)', url).groups()
     req_data = await request.get_json()
@@ -182,7 +186,7 @@ async def handle_request():
     prefill_instance_endpoint = prefill_instances[request_nums % len(prefill_instances)]
     decode_instance_endpoint = decode_instances[request_nums % len(decode_instances)]
     dip,dport= extract_ip_port(decode_instance_endpoint['request_address'])
-    preq_data = copy.deepcopy(req_data)
+    # preq_data = copy.deepcopy(req_data)
     
     
     
@@ -204,21 +208,18 @@ async def handle_request():
         "remote_host":ip ,
         "remote_port": port,
     }
-    # req_data['prompt'] += response_json['choices'][0]['text'] # comment out for ttft testing
-
-    # kv_transfer_params = response_json.get('kv_transfer_params', {})
-    # # print(f"zovlog:========> proxy kv_transfer_params = {kv_transfer_params}")
-    # if kv_transfer_params:
-    #     req_data["kv_transfer_params"] = kv_transfer_params
-    # generator=send_request_to_decode(decode_instance_endpoint['request_address'],req_data,request_id)
     
-    # decode_task = asyncio.create_task(make_response(generator))
+    st2=time.perf_counter()
+
     decode_request_task = asyncio.create_task(
         start_decode_request(decode_instance_endpoint['request_address'], req_data, request_id)
     )
-    
+    st3=time.perf_counter()
+
+    req_data['max_tokens'] -= 1
+
     # decode_task= asyncio.create_task(  send_request_to_decode(decode_instance_endpoint['request_address'],req_data,request_id))
-    send_prefill_task = asyncio.create_task(send_request_to_prefill(prefill_instance_endpoint['request_address'],preq_data,request_id,decode_instance_endpoint,dip,dport))
+    send_prefill_task = asyncio.create_task(send_request_to_prefill(prefill_instance_endpoint['request_address'],req_data,request_id,decode_instance_endpoint,dip,dport))
     # 现在decode可以获取prefill的所有信息了
     ip, port = extract_ip_port(prefill_instance_endpoint['request_address'])
    
@@ -230,6 +231,8 @@ async def handle_request():
     (session, decode_response), prefill_result = await asyncio.gather(decode_request_task, send_prefill_task)
     stream_generator = stream_decode_response(session, decode_response, request_id)
     response = await make_response(stream_generator)
+    st4=time.perf_counter()
+
     # response_json['kv_transfer_params']["do_remote_decode"] = False
     # response_json['kv_transfer_params']["do_remote_prefill"] = True
     # response_json['kv_transfer_params']["remote_host"] = ip
@@ -262,6 +265,8 @@ async def handle_request():
 
     # _,  response=await asyncio.gather(aw_response_json ,aw_generator)
     request_nums += 1
+    
+    print(f"{(st4-st3)=},{(st3-st2)=},{(st2-st1)=},{(st4-st1)=},request_id={request_id}")
     # print(f"zovlog:-----------> quit request")
     return response
 async def send_profile_cmd(req_data, profiler_cmd):
