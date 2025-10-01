@@ -21,7 +21,8 @@ import zmq
 import msgpack
 import socket
 import pickle
-
+import numpy as np
+from typing import List, Tuple
 from vllm import envs
 from vllm.attention.selector import backend_name_to_enum, get_attn_backend
 from vllm.config import VllmConfig
@@ -214,7 +215,10 @@ class MoRIIOWrapper():
         # 并发等待（如果MoRIIO支持）
         for status in transfers_to_wait:
             try:
+                st=time.perf_counter()
                 status.Wait()
+                en=time.perf_counter()
+                logger.info(f"Transfer {status} completed in {en-st:.4f} seconds")
             except Exception as e:
                 logger.error(f"Transfer {status} failed: {e}")
                 raise
@@ -1783,10 +1787,12 @@ class MoRIIOConnectorWorker:
         # ...existing code...
         ###################################
         # important debug code
-        # self.debug_cache.append((layer_name, (self.kv_caches[layer_name][:,local_block_ids[0],:,:,:].sum())))
-# ...existing code...
-        # if (len(self.debug_cache)-26)%27==0:
-        #         c=0
+#         self.debug_cache.append((layer_name, (self.kv_caches[layer_name][:,local_block_ids[0],:,:,:].sum())))
+# # ...existing code...
+#         # if (len(self.debug_cache)-26)%27==0:
+#         if (len(self.debug_cache)-62)%63==0:
+
+#                 c=0
         ###################################
 
         if layerwise:
@@ -1827,8 +1833,21 @@ class MoRIIOConnectorWorker:
                         # self.moriio_wrapper.read_remote_data_s(transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
                         print("!!!!",transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
                         print("!!!!",transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
-                self.merged_local, self.merged_remote, self.merged_sizes=self.merge_contiguous_blocks(offset_local,offset_remote,transfer_sizes)
-            
+                t1=time.perf_counter()
+                # tmp1,tmp2,tmp3=self.merge_contiguous_blocks(offset_local,offset_remote,transfer_sizes)
+                t2=time.perf_counter()
+
+                # tmp1,tmp2,tmp3=self.merge_contiguous_blocks_fast(offset_local,offset_remote,transfer_sizes)
+                t3=time.perf_counter()
+                self.merged_local, self.merged_remote, self.merged_sizes=self.merge_contiguous_blocks_fast_v2(offset_local,offset_remote,transfer_sizes)
+                t4=time.perf_counter()
+                logger.info(f"merge time v2 {t4-t3}, old {t2-t1}")
+                # assert (tmp1==self.merged_local)
+                # assert (tmp2==self.merged_remote)
+                # assert (tmp3==self.merged_sizes)
+                # assert (k1==self.merged_local)
+                # assert (k2==self.merged_remote)
+                # assert (k3==self.merged_sizes)
             a,b,c=self.this_layer_write_meta_offset()
             if use_batch:
                 # self.moriio_wrapper.read_remote_data(transfer_sizes,offset_local, offset_remote,sess_idx)
@@ -1958,7 +1977,76 @@ class MoRIIOConnectorWorker:
     
     
     
-    
+
+    def merge_contiguous_blocks_fast_v2(self,offsets_local: List[int],offsets_remote: List[int],sizes: List[int],assume_sorted: bool = False) -> Tuple[List[int], List[int], List[int]]:
+        n = len(offsets_local)
+        if n == 0:
+            return [], [], []
+        if not (n == len(offsets_remote) == len(sizes)):
+            raise ValueError("Input list lengths mismatch")
+        local_arr = np.fromiter(offsets_local, dtype=np.int64, count=n)
+        remote_arr = np.fromiter(offsets_remote, dtype=np.int64, count=n)
+        sizes_arr = np.fromiter(sizes, dtype=np.int64, count=n)
+
+        if assume_sorted:
+            local_sorted = local_arr
+            remote_sorted = remote_arr
+            sizes_sorted = sizes_arr
+        else:
+            # 检测已排序避免 argsort
+            if np.all(local_arr[:-1] <= local_arr[1:]):
+                local_sorted = local_arr
+                remote_sorted = remote_arr
+                sizes_sorted = sizes_arr
+            else:
+                sort_idx = np.argsort(local_arr, kind="stable")
+                local_sorted = local_arr[sort_idx]
+                remote_sorted = remote_arr[sort_idx]
+                sizes_sorted = sizes_arr[sort_idx]
+
+        # 差分判定连续 (比构造 local_ends / 逐元素加法更省)
+        # 若 diff_local == prev_size 且 diff_remote == prev_size => 连续
+        if n == 1:
+            return [int(local_sorted[0])], [int(remote_sorted[0])], [int(sizes_sorted[0])]
+
+        diff_local = local_sorted[1:] - local_sorted[:-1]
+        diff_remote = remote_sorted[1:] - remote_sorted[:-1]
+        prev_size = sizes_sorted[:-1]
+
+        contiguous = (diff_local == prev_size) & (diff_remote == prev_size)
+
+        # Fast path: 没有任何可合并
+        if not contiguous.any():
+            return local_sorted.tolist(), remote_sorted.tolist(), sizes_sorted.tolist()
+
+        # Fast path: 全部连续 -> 单区间
+        if contiguous.all():
+            total_size = int(sizes_sorted.sum())
+            return [int(local_sorted[0])], [int(remote_sorted[0])], [total_size]
+
+        # 标记断点: contiguous=False 的位置断开
+        # 断点起始包含 index 0
+        break_positions = np.flatnonzero(~contiguous) + 1  # 下一个片段的开始
+        # 加入首尾
+        segment_starts = np.concatenate(([0], break_positions))
+        segment_ends = np.concatenate((break_positions, [n]))
+
+        seg_count = len(segment_starts)
+        merged_local = [0] * seg_count
+        merged_remote = [0] * seg_count
+        merged_sizes = [0] * seg_count
+
+        # 逐段聚合
+        for si in range(seg_count):
+            s = segment_starts[si]
+            e = segment_ends[si]
+            merged_local[si] = int(local_sorted[s])
+            merged_remote[si] = int(remote_sorted[s])
+            # size = (最后一个块末尾) - (第一个块起始)
+            # 末尾块末尾 = local_sorted[e-1] + sizes_sorted[e-1]
+            merged_sizes[si] = int(local_sorted[e - 1] + sizes_sorted[e - 1] - local_sorted[s])
+
+        return merged_local, merged_remote, merged_sizes
     def merge_contiguous_blocks(self, offsets_local, offsets_remote, sizes):
         """
         合并连续的存储区块
@@ -2061,9 +2149,11 @@ class MoRIIOConnectorWorker:
         cl=[]
         sl=[] #26+27*n
         for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
-            self.debug_cache.append((layer_name, (self.kv_caches[layer_name][:,local_block_ids[0],:,:,:].sum())))
-            if (len(self.debug_cache)-26)%27==0: 
-                c=0
+            # self.debug_cache.append((layer_name, (self.kv_caches[layer_name][:,local_block_ids[0],:,:,:].sum())))
+            # # if (len(self.debug_cache)-26)%27==0: 
+            # if (len(self.debug_cache)-62)%63==0:
+
+            #     c=0
                 
             if GLOBAL_MORIIO_MODE == MoRIIOMode.WRITE:
                 continue

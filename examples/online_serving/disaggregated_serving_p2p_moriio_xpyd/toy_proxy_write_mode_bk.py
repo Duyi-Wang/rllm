@@ -27,6 +27,8 @@ request_nums = 0
 app = Quart(__name__)
 
 yield_chunk = set()
+IP_PORT_PATTERN = re.compile(r'//(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)')
+#re.search(r'//(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)', url).groups()
 
 count=1
 from itertools import count
@@ -131,7 +133,7 @@ async def stream_decode_response(session, response, request_id):
     """流式处理响应"""
     try:
         if response.status == 200:
-            async for chunk_bytes in response.content.iter_chunked(10240):
+            async for chunk_bytes in response.content.iter_chunked(1024):
                 if request_id not in yield_chunk:
                     yield_chunk.add(request_id)
                 else:
@@ -174,101 +176,74 @@ async def send_request_to_decode(endpoint,req_data,request_id):
 @app.route("/v1/chat/completions", methods=["POST"])
 async def handle_request():
     # print(f"zovlog:-----------> enter request")
+    try:
+        import time
+        
+        st1=time.perf_counter()
+        global request_nums
+        # extract_ip_port = lambda url: re.search(r'//(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)', url).groups()
+        def extract_ip_port_fast(url):
+            return IP_PORT_PATTERN.search(url).groups()
+        req_data = await request.get_json()
+        st1p5=time.perf_counter()
+
+        # print(f"req_data = {req_data}")
+        request_id = str(uuid.uuid4())
+        prefill_instance_endpoint = prefill_instances[request_nums % len(prefill_instances)]
+        decode_instance_endpoint = decode_instances[request_nums % len(decode_instances)]
+        dip,dport= extract_ip_port_fast(decode_instance_endpoint['request_address'])
+        # preq_data = copy.deepcopy(req_data)
+        ip, port = extract_ip_port_fast(prefill_instance_endpoint['request_address'])
+        # response_json['kv_transfer_params']["do_remote_decode"] = False
+        # response_json['kv_transfer_params']["do_remote_prefill"] = True
+        # response_json['kv_transfer_params']["remote_host"] = ip
+        # response_json['kv_transfer_params']["remote_port"] = port # 似乎没用
+        # response_json['kv_transfer_params']["remote_handshake_port"] = prefill_instance_endpoint['handshake_port']
+
+        req_data['max_tokens'] -= 1
+        
+        req_data['kv_transfer_params'] = {
+            "do_remote_decode": False,
+            "do_remote_prefill": True,
+            "remote_handshake_port": prefill_instance_endpoint['handshake_port'],
+            "remote_engine_id": None,
+            "remote_block_ids": None,
+            "remote_host":ip ,
+            "remote_port": port,
+        }
+        
+        st2=time.perf_counter()
+
+        decode_request_task = asyncio.create_task(
+            start_decode_request(decode_instance_endpoint['request_address'], req_data, request_id)
+        )
+        st3=time.perf_counter()
+
+        req_data['max_tokens'] += 1
+
+        # decode_task= asyncio.create_task(  send_request_to_decode(decode_instance_endpoint['request_address'],req_data,request_id))
+        send_prefill_task = asyncio.create_task(send_request_to_prefill(prefill_instance_endpoint['request_address'],req_data,request_id,decode_instance_endpoint,dip,dport))
+        # 现在decode可以获取prefill的所有信息了
+        ip, port = extract_ip_port_fast(prefill_instance_endpoint['request_address'])
     
-    import time
     
-    st1=time.perf_counter()
-    global request_nums
-    extract_ip_port = lambda url: re.search(r'//(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)', url).groups()
-    req_data = await request.get_json()
-    # print(f"req_data = {req_data}")
-    request_id = str(uuid.uuid4())
-    prefill_instance_endpoint = prefill_instances[request_nums % len(prefill_instances)]
-    decode_instance_endpoint = decode_instances[request_nums % len(decode_instances)]
-    dip,dport= extract_ip_port(decode_instance_endpoint['request_address'])
-    # preq_data = copy.deepcopy(req_data)
+
+        # (session, decode_response), prefill_result = await asyncio.gather(decode_request_task, send_prefill_task)
+        session, decode_response = await decode_request_task
+        stream_generator = stream_decode_response(session, decode_response, request_id)
+        response = await make_response(stream_generator)
+        st4=time.perf_counter()
+
     
-    
-    
-    ip, port = extract_ip_port(prefill_instance_endpoint['request_address'])
-    # response_json['kv_transfer_params']["do_remote_decode"] = False
-    # response_json['kv_transfer_params']["do_remote_prefill"] = True
-    # response_json['kv_transfer_params']["remote_host"] = ip
-    # response_json['kv_transfer_params']["remote_port"] = port # 似乎没用
-    # response_json['kv_transfer_params']["remote_handshake_port"] = prefill_instance_endpoint['handshake_port']
 
-    req_data['max_tokens'] -= 1
-    
-    req_data['kv_transfer_params'] = {
-        "do_remote_decode": False,
-        "do_remote_prefill": True,
-        "remote_handshake_port": prefill_instance_endpoint['handshake_port'],
-        "remote_engine_id": None,
-        "remote_block_ids": None,
-        "remote_host":ip ,
-        "remote_port": port,
-    }
-    
-    st2=time.perf_counter()
-
-    decode_request_task = asyncio.create_task(
-        start_decode_request(decode_instance_endpoint['request_address'], req_data, request_id)
-    )
-    st3=time.perf_counter()
-
-    req_data['max_tokens'] -= 1
-
-    # decode_task= asyncio.create_task(  send_request_to_decode(decode_instance_endpoint['request_address'],req_data,request_id))
-    send_prefill_task = asyncio.create_task(send_request_to_prefill(prefill_instance_endpoint['request_address'],req_data,request_id,decode_instance_endpoint,dip,dport))
-    # 现在decode可以获取prefill的所有信息了
-    ip, port = extract_ip_port(prefill_instance_endpoint['request_address'])
-   
-    # await asyncio.gather(decode_task )
-    # decode_task.result()
-    # response = decode_task.result()
-    # await asyncio.gather(send_prefill_task )
-
-    (session, decode_response), prefill_result = await asyncio.gather(decode_request_task, send_prefill_task)
-    stream_generator = stream_decode_response(session, decode_response, request_id)
-    response = await make_response(stream_generator)
-    st4=time.perf_counter()
-
-    # response_json['kv_transfer_params']["do_remote_decode"] = False
-    # response_json['kv_transfer_params']["do_remote_prefill"] = True
-    # response_json['kv_transfer_params']["remote_host"] = ip
-    # response_json['kv_transfer_params']["remote_port"] = port # 似乎没用
-    # response_json['kv_transfer_params']["remote_handshake_port"] = prefill_instance_endpoint['handshake_port']
-
-    req_data['max_tokens'] -= 1
-    
-    req_data['kv_transfer_params'] = {
-        "do_remote_decode": False,
-        "do_remote_prefill": True,
-        "remote_handshake_port": prefill_instance_endpoint['handshake_port'],
-        "remote_engine_id": None,
-        "remote_block_ids": None,
-        "remote_host":ip ,
-        "remote_port": port,
-    }
-    # req_data['prompt'] += response_json['choices'][0]['text'] # comment out for ttft testing
-
-    # kv_transfer_params = response_json.get('kv_transfer_params', {})
-    # # print(f"zovlog:========> proxy kv_transfer_params = {kv_transfer_params}")
-    # if kv_transfer_params:
-    #     req_data["kv_transfer_params"] = kv_transfer_params
-    # generator=send_request_to_decode(decode_instance_endpoint['request_address'],req_data,request_id)
- 
-    # await asyncio.gather( decode_task)
-
- 
-    # response = await make_response(response)
-
-    # _,  response=await asyncio.gather(aw_response_json ,aw_generator)
-    request_nums += 1
-    
-    print(f"{(st4-st3)=},{(st3-st2)=},{(st2-st1)=},{(st4-st1)=},request_id={request_id}")
-    # print(f"zovlog:-----------> quit request")
-    return response
+        request_nums += 1
+        
+        print(f"{(st4-st3)=},{(st3-st2)=},{(st2-st1)=},{(st1p5-st1)},{(st4-st1)=},request_id={request_id}")
+        # print(f"zovlog:-----------> quit request")
+        return response
+    except Exception as e:
+        print(e)
+        pass
 async def send_profile_cmd(req_data, profiler_cmd):
     global request_nums
     
