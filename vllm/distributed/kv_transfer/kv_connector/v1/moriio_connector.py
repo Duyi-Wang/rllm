@@ -109,7 +109,8 @@ class MoRIIOWrapper():
         self.tp_rank = get_tensor_model_parallel_rank()
         self.sessiones=[]
         self.has_register_remote_engine = False 
-
+        self.kv_caches = None
+        self.debug_id=1
         # self.remote_handshake_port = None # P->D 发送read完毕的reqid
         # self.local_handshake_port = None # D<-P 接收read完毕的reqid
         # self.waiting_for_remote_read_complete_thread = None # P 节点需要在D节点read完成之后才能安全释放blockid,因此这里管理
@@ -227,12 +228,20 @@ class MoRIIOWrapper():
                 logger.error(f"Transfer {status} failed: {e}")
                 raise
             
-
-    def async_wait_reqid(self):
+    def get_hash(self,n,local_block_ids):
+        return self.kv_caches[list(self.kv_caches.keys())[n]][:,local_block_ids,:,:,:].sum()
+    def get_all_hash(self,local_block_ids):
+        hash_list = []
+        for n in range(len(self.kv_caches)):
+            hash_list.append(self.get_hash(n,local_block_ids).item())
+        return hash_list
+    def async_wait_reqid(self,kv_caches=None):
         # assert self.remote_engine_ip is not None,"remote engine ip is None!"
         # if self.tp_rank!=0:
         #     pass
         # return
+        if kv_caches is not None:
+            self.kv_caches = kv_caches
         assert self.notify_port is not None,"remote engine port is not None!"
         if self.notify_thread is not None:
             return
@@ -254,7 +263,8 @@ class MoRIIOWrapper():
                             msg_type = data.get("type", "unknown")
                             
                             print_cur_time(f"!!!zovlog:P received remote block msg: req_id={req_id}, type={msg_type}")
-                            
+                            #TODO  更好的处理方法， 不然新旧request这里容易冲突
+                            # torch.distributed.barrier(get_tp_group().device_group)
                             # 处理结构化消息 #TODO 修复初始化的问题
                             # if GLOBAL_ROLE == ROLE.PRODUCER:
                             with self.lock:
@@ -272,16 +282,24 @@ class MoRIIOWrapper():
                         if  msg.startswith("cmpl"):
                                 # assert 0,"P instance received error req id data"
                             if GLOBAL_ROLE==ROLE.PRODUCER:
+                                # torch.distributed.barrier(get_tp_group().device_group)
+
                                 # P节点执行   
                                 with self.lock:  #可以释放page
+
                                     logger.info(f"zovlog:P received red id {msg} for release")
                                     self.done_req_ids.append(msg)
                             # D节点执行
                             else:
                             # elif GLOBAL_ROLE==ROLE.CONSUMER:
                                 with self.lock:   
+                                    # torch.distributed.barrier(get_tp_group().device_group)
                                     print_cur_time(f"!!!zovlog:D received write cache complete req id {msg}")
                                     self.done_write_cache_req_ids.append(msg)
+                                    
+                                    logger.info(f"{self.debug_id=} {str(self.get_all_hash(self.debug_id))}")
+                                    self.debug_id+=1
+                                    # time.sleep(5)
                     
                     
                     # else:
@@ -312,13 +330,15 @@ class MoRIIOWrapper():
             req_ids_ = req_ids
         host = self.remote_engine_ip
         path = make_zmq_path("tcp", host, self.notify_port)
+        
+        #TODO make on
         if self.sock is None:
             self.ctx = zmq.Context()
             # path = make_zmq_path("tcp", host, self.notify_port)
             self.sock = make_zmq_socket(ctx=self.ctx,
-                              path=path,
-                              socket_type=zmq.DEALER,
-                              bind=False)
+                                path=path,
+                                socket_type=zmq.DEALER,
+                                bind=False)
             # with zmq_ctx(zmq.DEALER, path) as sock:
         for req in req_ids_:
             assert isinstance(req,str)
@@ -337,6 +357,7 @@ class MoRIIOWrapper():
         with self.lock:
             if len(self.done_write_cache_req_ids)!=0:
                 c=0
+                # torch.distributed.barrier(get_tp_group().device_group)
             done_write_cache = set(self.done_write_cache_req_ids)
             self.done_write_cache_req_ids = []
         return done_write_cache
@@ -935,7 +956,7 @@ class MoRIIOConnectorWorker:
         # have the same number of blocks.
         self.dst_num_blocks: dict[EngineId, int] = {}
         self._registered_descs: list[Any] = []
-
+        self.finished_int=0
         # In progress transfers.
         # [req_id -> list[handle]]
         self._recving_transfers = defaultdict[ReqId, list[Transfer]](list)
@@ -1329,7 +1350,7 @@ class MoRIIOConnectorWorker:
             name="nixl_handshake_listener")
         self._nixl_handshake_listener_t.start()
         ready_event.wait()  # Wait for listener ZMQ socket to be ready.
-        self.moriio_wrapper.async_wait_reqid()
+        self.moriio_wrapper.async_wait_reqid(self.kv_caches)
 
    
         '''
@@ -1554,9 +1575,11 @@ class MoRIIOConnectorWorker:
                 self.moriio_wrapper.async_wait_reqid()
             # logger.info(f"zovog:======> call get_finished,my role = D")
             done_sending, done_recving = set(), self.moriio_wrapper.pop_finished_write_req_ids()
-        
         if len(done_recving)!=0:
             p=0
+            print_cur_time("finish"+str(self.finished_int)+"   ")
+        # torch.distributed.barrier()
+        self.finished_int+=1
         return done_sending, done_recving
 
     def _get_new_notifs(self) -> set[str]:
@@ -1717,7 +1740,8 @@ class MoRIIOConnectorWorker:
         self._reqs_to_send.update(metadata.reqs_to_send)
         # if GLOBAL_MORIIO_MODE==MoRIIOMode.READ:
         #TODO 现在还是需要发送， 理论上只有read需要
-        for req_id, _ in metadata.reqs_to_recv.items():
+        # torch.distributed.barrier(get_tp_group().device_group)
+        for req_id, _ in metadata.reqs_to_recv.items():    
             self.moriio_wrapper.send_notify(req_id,_)
 
     def _read_blocks_for_req(self, req_id: str, meta: ReqMeta):
@@ -1749,6 +1773,13 @@ class MoRIIOConnectorWorker:
         return False
     def this_layer_write_meta_offset(self):
         return self.merged_local, self.merged_remote, self.merged_sizes
+             
+    def get_hash(self,n,local_block_ids):
+        return self.kv_caches[list(self.kv_caches.keys())[n]][:,local_block_ids,:,:,:].sum()
+    def get_all_hash(self,local_block_ids):
+        hash_list = []
+        for n in range(len(self.kv_caches)):
+            hash_list.append(self.get_hash(n,local_block_ids).item())
     def _write_blocks(self, 
                      local_block_ids: list[int],
                      remote_block_ids: list[int], 
@@ -1776,7 +1807,7 @@ class MoRIIOConnectorWorker:
         if GLOBAL_MORIIO_MODE==MoRIIOMode.READ:
             return
         layerwise=True
-        # logger.info(f"mymy {layer_name = }")
+        logger.info(f"mymy {local_block_ids =},{remote_block_ids = }")
         
         use_batch=True
         if not self.builded_write_session:
@@ -1798,12 +1829,12 @@ class MoRIIOConnectorWorker:
         # ...existing code...
         ###################################
         # important debug code
-#         self.debug_cache.append((layer_name, (self.kv_caches[layer_name][:,local_block_ids[0],:,:,:].sum())))
+        self.debug_cache.append((layer_name, (self.kv_caches[layer_name][:,local_block_ids[0],:,:,:].sum())))
 # # ...existing code...
-#         # if (len(self.debug_cache)-26)%27==0:
+        if (len(self.debug_cache)-26)%27==0:
 #         if (len(self.debug_cache)-62)%63==0:
 
-#                 c=0
+                cccccc=0
         ###################################
 
         if layerwise:
@@ -1860,6 +1891,8 @@ class MoRIIOConnectorWorker:
                 # assert (k2==self.merged_remote)
                 # assert (k3==self.merged_sizes)
             a,b,c=self.this_layer_write_meta_offset()
+            if self.tp_rank==0:
+                qqq=0
             if use_batch:
                 # self.moriio_wrapper.read_remote_data(transfer_sizes,offset_local, offset_remote,sess_idx)
                 
@@ -1868,7 +1901,10 @@ class MoRIIOConnectorWorker:
                 #     print(c[ii]/1024)
                 # time.sleep(0.2)
                 # self.moriio_wrapper.waiting_for_read_complete()
+                logger.info(f"{sess_idx =} +{str(c)}")
                 self.moriio_wrapper.write_remote_data(c,a, b,sess_idx)
+                self.moriio_wrapper.waiting_for_read_complete()
+
                 # self.moriio_wrapper.waiting_for_read_complete()
                 # time.sleep(0.2)
             else:
@@ -1878,19 +1914,24 @@ class MoRIIOConnectorWorker:
                     # time.sleep(/sz.1)
                     # print("bbbb",c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
                     self.moriio_wrapper.write_remote_data_s(c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
+                    # self.moriio_wrapper.waiting_for_read_complete()
+
             if self._is_last_layer(layer_name):
                     # time.sleep(0.1)
 
                 self.moriio_wrapper.waiting_for_read_complete()
+                
                 # self.moriio_wrapper.done_req_ids.append(request_id)
 
                 logger.info(f"send notify to D")
+                # torch.distributed.barrier(get_tp_group().device_group)
+                # if self.tp_rank==0:
+                #     ppp=0
                 self.moriio_wrapper.send_notify(request_id)
                 logger.info(f"send notify to D end")
               
                     
                 print_cur_time("!!!!last layer write time ")
-                b=0
         elif not layerwise:
         
             
@@ -2128,8 +2169,8 @@ class MoRIIOConnectorWorker:
         # logger.info(f"zovlog:========> start read blocks {local_block_ids = },{remote_block_ids = },{dst_engine_id = },{request_id = }")
         # return
         # 每一层的对应blkid都需要传输
-        if GLOBAL_MORIIO_MODE==MoRIIOMode.WRITE:
-            return
+        # if GLOBAL_MORIIO_MODE==MoRIIOMode.WRITE:
+        #     return
         # if GLOBAL_MORIIO_MODE == MoRIIOMode.WRITE:
         #         return 
         start = time.perf_counter()
@@ -2164,11 +2205,11 @@ class MoRIIOConnectorWorker:
         cl=[]
         sl=[] #26+27*n
         for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
-            # self.debug_cache.append((layer_name, (self.kv_caches[layer_name][:,local_block_ids[0],:,:,:].sum())))
-            # # if (len(self.debug_cache)-26)%27==0: 
+            self.debug_cache.append((layer_name, (self.kv_caches[layer_name][:,local_block_ids[0],:,:,:].sum())))
+            if (len(self.debug_cache)-26)%27==0: 
             # if (len(self.debug_cache)-62)%63==0:
 
-            #     c=0
+                cccccccc=0
                 
             if GLOBAL_MORIIO_MODE == MoRIIOMode.WRITE:
                 continue
