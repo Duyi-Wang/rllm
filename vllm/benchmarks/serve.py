@@ -521,8 +521,13 @@ async def benchmark(
             return await request_func(request_func_input=request_func_input,
                                       session=session,
                                       pbar=pbar)
-
+    def print_cur_time(str):
+        now = datetime.now()
+        print(str, now.strftime("%H:%M:%S.%f")[:-2])  
     benchmark_start_time = time.perf_counter()
+   # trim to milliseconds
+    # print("!!!st time", time.time())
+    print_cur_time("!!!st time")
     tasks: list[asyncio.Task] = []
 
     rps_change_events = []
@@ -576,10 +581,10 @@ async def benchmark(
                                      session=session,
                                      pbar=pbar)))
     outputs: list[RequestFuncOutput] = await asyncio.gather(*tasks)
-
+    print_cur_time("!!!ed time")
     if pbar is not None:
         pbar.close()
-
+    print_cur_time("!!!cl time")
     benchmark_duration = time.perf_counter() - benchmark_start_time
 
     if task_type == TaskType.GENERATION:

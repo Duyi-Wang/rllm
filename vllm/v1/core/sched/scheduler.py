@@ -871,6 +871,14 @@ class Scheduler(SchedulerInterface):
         model_runner_output: ModelRunnerOutput,
     ) -> dict[int, EngineCoreOutputs]:
         # logger.info(f"zovlog0831:------------->call update_from_output,{model_runner_output = }")
+        
+        
+        def print_cur_time(strr):
+            from datetime import datetime
+            now = datetime.now()
+            logger.info(strr+str(now.strftime("%H:%M:%S.%f")[:-2]))
+            
+        # print_cur_time("!!!!update_from_output ")
         sampled_token_ids = model_runner_output.sampled_token_ids
         logprobs = model_runner_output.logprobs
         prompt_logprobs_dict = model_runner_output.prompt_logprobs_dict

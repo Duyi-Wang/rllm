@@ -443,6 +443,12 @@ class EngineCore:
         # Note on thread safety: no race condition.
         # `mm_receiver_cache` is reset at the end of LLMEngine init,
         # and will only be accessed in the input processing thread afterwards.
+        def print_cur_time(strr):
+            from datetime import datetime
+
+            now = datetime.now()
+            logger.info(strr+str(now.strftime("%H:%M:%S.%f")[:-2]))
+        print_cur_time("!!!engine got request")
         if self.mm_receiver_cache is not None and request.mm_features:
             request.mm_features = (
                 self.mm_receiver_cache.get_and_update_features(
@@ -924,13 +930,18 @@ class EngineCoreProc(EngineCore):
                     ctx, coord_output_path, zmq.PUSH, bind=False,
                     linger=4000)) if coord_output_path is not None else None
             max_reuse_bufs = len(sockets) + 1
-
+            def print_cur_time(strr):
+                from datetime import datetime
+                now = datetime.now()
+                logger.info(strr+str(now.strftime("%H:%M:%S.%f")[:-2]))
             while True:
                 output = self.output_queue.get()
                 # logger.info(f"zovlog:=====> output socket get output index:{output}")
                 if output == EngineCoreProc.ENGINE_CORE_DEAD:
                     for socket in sockets:
+                       
                         socket.send(output)
+                        print_cur_time(f"!!!engine cnmde send to socket ")
                     break
                 assert not isinstance(output, bytes)
                 client_index, outputs = output
@@ -949,6 +960,8 @@ class EngineCoreProc(EngineCore):
 
                 buffer = reuse_buffers.pop() if reuse_buffers else bytearray()
                 buffers = encoder.encode_into(outputs, buffer)
+                # print_cur_time(f"!!!engine core output send to socket ")
+
                 tracker = sockets[client_index].send_multipart(buffers,
                                                                copy=False,
                                                                track=True)

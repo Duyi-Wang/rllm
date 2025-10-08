@@ -66,7 +66,11 @@ class MoRIIOMode(Enum):
 # 全局模式变量
 GLOBAL_MORIIO_MODE = MoRIIOMode.WRITE
 logger = init_logger(__name__)
+def print_cur_time(strr):
+    from datetime import datetime
 
+    now = datetime.now()
+    logger.info("!!!"+strr+str(now.strftime("%H:%M:%S.%f")[:-2]))
 # Lazy import nixl_wrapper to avoid loading nixl_bindings if nixl is not used
 try:
     import mori
@@ -236,7 +240,6 @@ class MoRIIOWrapper():
             host = "*"
             path = make_zmq_path("tcp", host, self.notify_port)
             with zmq_ctx(zmq.ROUTER, path) as sock:
-                logger.info(f"zovlog:async async_wait_reqid launched!!!!!!!!!!! listen:{path}")
                 while True:
                     identity, msg = sock.recv_multipart()
                     
@@ -249,7 +252,7 @@ class MoRIIOWrapper():
                             int_list = data.get("int_list", [])
                             msg_type = data.get("type", "unknown")
                             
-                            logger.info(f"zovlog:P received remote block msg: req_id={req_id}, type={msg_type}")
+                            print_cur_time(f"!!!zovlog:P received remote block msg: req_id={req_id}, type={msg_type}")
                             
                             # 处理结构化消息 #TODO 修复初始化的问题
                             # if GLOBAL_ROLE == ROLE.PRODUCER:
@@ -265,18 +268,18 @@ class MoRIIOWrapper():
                     
                         
                         msg = msg.decode("UTF-8")
-                        logger.info(f"zovlog:P received red id {msg}")
                         if  msg.startswith("cmpl"):
                                 # assert 0,"P instance received error req id data"
                             if GLOBAL_ROLE==ROLE.PRODUCER:
                                 # P节点执行   
                                 with self.lock:  #可以释放page
+                                    logger.info(f"zovlog:P received red id {msg} for release")
                                     self.done_req_ids.append(msg)
                             # D节点执行
                             else:
                             # elif GLOBAL_ROLE==ROLE.CONSUMER:
                                 with self.lock:   
-                                    logger.info(f"zovlog:D received write cache complete req id {msg}")
+                                    print_cur_time(f"!!!zovlog:D received write cache complete req id {msg}")
                                     self.done_write_cache_req_ids.append(msg)
                     
                     
@@ -672,7 +675,7 @@ class MoRIIOConnectorScheduler:
                 # send_no
                 b=0
                 self.send_notify_block(req_id=request.request_id,int_list=blocks.get_block_ids()[0],host=params.get("remote_host"),port=self.side_notify_port)
-                b=0
+                print_cur_time("!!!send_notify_block called!")
             
                 # assert num_external_tokens == 0f
             # Only trigger 1 KV transfer per request.
@@ -1709,8 +1712,9 @@ class MoRIIOConnectorWorker:
 
         # Add to requests that are waiting to be read and track expiration.
         self._reqs_to_send.update(metadata.reqs_to_send)
+        # if GLOBAL_MORIIO_MODE==MoRIIOMode.READ:
+        #TODO 现在还是需要发送， 理论上只有read需要
         for req_id, _ in metadata.reqs_to_recv.items():
-            # logger.info(f"zovlog: send {req_id} to notify ")
             self.moriio_wrapper.send_notify(req_id,_)
 
     def _read_blocks_for_req(self, req_id: str, meta: ReqMeta):
@@ -1751,8 +1755,9 @@ class MoRIIOConnectorWorker:
                      kv_layer: torch.Tensor):
         # pass
         # TODO  self._handshake_futures[eid]
-        
-        
+        whilewait_time=None
+        if self._is_first_layer(layer_name):
+            whilewait_time=time.perf_counter()
         while True:
             if request_id in self.moriio_wrapper.done_remote_allocate_req:
                 remote_block_ids = self.moriio_wrapper.done_remote_allocate_req_dict[request_id]
@@ -1762,11 +1767,14 @@ class MoRIIOConnectorWorker:
                 break
             else:
                 b=0
+        if self._is_first_layer(layer_name):
+            whilewait_time2=time.perf_counter()
+            logger.info(f"!!!!!!wait remote allocate time {whilewait_time2-whilewait_time}")
         if GLOBAL_MORIIO_MODE==MoRIIOMode.READ:
             return
         layerwise=True
         # logger.info(f"mymy {layer_name = }")
-       
+        
         use_batch=True
         if not self.builded_write_session:
             for layer_namekk,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
@@ -1864,17 +1872,21 @@ class MoRIIOConnectorWorker:
                 self.moriio_wrapper.waiting_for_read_complete()
 
                 for rang_idx in range(len(a)):
-                    time.sleep(0.1)
+                    # time.sleep(/sz.1)
                     # print("bbbb",c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
                     self.moriio_wrapper.write_remote_data_s(c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
             if self._is_last_layer(layer_name):
                     # time.sleep(0.1)
 
                 self.moriio_wrapper.waiting_for_read_complete()
+                # self.moriio_wrapper.done_req_ids.append(request_id)
+
                 logger.info(f"send notify to D")
                 self.moriio_wrapper.send_notify(request_id)
                 logger.info(f"send notify to D end")
-
+              
+                    
+                print_cur_time("!!!!last layer write time ")
                 b=0
         elif not layerwise:
         
