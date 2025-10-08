@@ -222,7 +222,7 @@ class MoRIIOWrapper():
                 st=time.perf_counter()
                 status.Wait()
                 en=time.perf_counter()
-                logger.info(f"Transfer {status} completed in {en-st:.4f} seconds")
+                # logger.info(f"Transfer {status} completed in {en-st:.4f} seconds")
             except Exception as e:
                 logger.error(f"Transfer {status} failed: {e}")
                 raise
@@ -239,6 +239,7 @@ class MoRIIOWrapper():
         def _async_wait():
             host = "*"
             path = make_zmq_path("tcp", host, self.notify_port)
+            logger.info(f" node starting to listen notify from ..path = {path}")
             with zmq_ctx(zmq.ROUTER, path) as sock:
                 while True:
                     identity, msg = sock.recv_multipart()
@@ -528,7 +529,7 @@ class MoRIIOConnectorScheduler:
         
         #todo , how to send with tp
         self.side_notify_port = self.vllm_config.kv_transfer_config.kv_connector_extra_config['notify_port'] # envs.VLLM_NIXL_SIDE_CHANNEL_PORT +
-        
+        self.tp_size=self.vllm_config.parallel_config.tensor_parallel_size
          
         self.is_producer = vllm_config.kv_transfer_config.kv_role == "kv_producer"
         # self.gotted = False
@@ -601,13 +602,13 @@ class MoRIIOConnectorScheduler:
         
     #     host = self.remote_engine_ip
         path = make_zmq_path("tcp", host, port)
-        
-        if self.sock is None:
-            self.ctx = zmq.Context()
-            self.sock = make_zmq_socket(ctx=self.ctx,
-                            path=path,
-                            socket_type=zmq.DEALER,
-                            bind=False)
+        #TODO:     make once     
+        # if self.sock is None:
+        self.ctx = zmq.Context()
+        self.sock = make_zmq_socket(ctx=self.ctx,
+                        path=path,
+                        socket_type=zmq.DEALER,
+                        bind=False)
         
         # 构造要发送的数据结构
         data = {
@@ -616,7 +617,7 @@ class MoRIIOConnectorScheduler:
             "type": "remote_blocks"
         }
         serialized_data = msgpack.dumps(data)
-        logger.info(f"zovlog: sending notify with data to P...req_id = {req_id}, , path = {path}")
+        logger.info(f"zovlog: sending block slots with data to P...req_id = {req_id}, , path = {path}")
         self.sock.send(serialized_data)
     def update_state_after_alloc(self, request: "Request", # 包含remote使用到的blockid
                                  blocks: "KVCacheBlocks", # local 分配好的blockid
@@ -673,10 +674,12 @@ class MoRIIOConnectorScheduler:
                 # send block ids
                 #TODO , decode allocate wich times?
                 # send_no
-                b=0
-                self.send_notify_block(req_id=request.request_id,int_list=blocks.get_block_ids()[0],host=params.get("remote_host"),port=self.side_notify_port)
                 print_cur_time("!!!send_notify_block called!")
-            
+                for tp_index in range(self.tp_size):
+                    cur_port=self.side_notify_port+tp_index
+                    self.send_notify_block(req_id=request.request_id,int_list=blocks.get_block_ids()[0],host=params.get("remote_host"),port=cur_port)
+                print_cur_time("!!!send_notify_block call finished!")
+
                 # assert num_external_tokens == 0f
             # Only trigger 1 KV transfer per request.
             #这里可能是  那个get_mun_new_matched_tokens，为了显存允许decode做一点prefill
