@@ -1901,9 +1901,9 @@ class MoRIIOConnectorWorker:
                 #     print(c[ii]/1024)
                 # time.sleep(0.2)
                 # self.moriio_wrapper.waiting_for_read_complete()
-                logger.info(f"{sess_idx =} +{str(c)}")
+                logger.info(f"{sess_idx =} +{str(c)}+{str(a)}+{str(b)}")
                 self.moriio_wrapper.write_remote_data(c,a, b,sess_idx)
-                self.moriio_wrapper.waiting_for_read_complete()
+                # self.moriio_wrapper.waiting_for_read_complete()
 
                 # self.moriio_wrapper.waiting_for_read_complete()
                 # time.sleep(0.2)
