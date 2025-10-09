@@ -183,7 +183,7 @@ class MoRIIOWrapper():
     def write_remote_data(self,transfer_size_byte,local_offset = 0,remote_offset = 0, sess_idx=0):
         assert self.remote_memory_metadata is not None,"You have not register remote memory data!"
         assert self.local_memory_registered,"You have not register local memory data!"
-        write_uid=self.moriio_engine.allocate_transfer_uid()
+        write_uid=self.moriio_engine.allocate_transfer_uid()+self.tp_rank*100000
         # print(write_uid)
         transfer_status = self.sessiones[sess_idx].batch_write(
              local_offset, 
@@ -222,6 +222,13 @@ class MoRIIOWrapper():
             try:
                 st=time.perf_counter()
                 status.Wait()
+                if status.Succeeded():
+                    pass
+                    # logger.info(f"Transfer {status} succeeded")
+                else:
+                    logger.info(f"!!ggggg {status.Message()}")
+                    logger.info(f"!!ggggg {status.Code()}")
+
                 en=time.perf_counter()
                 # logger.info(f"Transfer {status} completed in {en-st:.4f} seconds")
             except Exception as e:
@@ -1833,8 +1840,7 @@ class MoRIIOConnectorWorker:
 # # ...existing code...
         if (len(self.debug_cache)-26)%27==0:
 #         if (len(self.debug_cache)-62)%63==0:
-
-                cccccc=0
+            cccccc=0
         ###################################
 
         if layerwise:
@@ -1881,7 +1887,9 @@ class MoRIIOConnectorWorker:
 
                 # tmp1,tmp2,tmp3=self.merge_contiguous_blocks_fast(offset_local,offset_remote,transfer_sizes)
                 t3=time.perf_counter()
-                self.merged_local, self.merged_remote, self.merged_sizes=self.merge_contiguous_blocks_fast_v2(offset_local,offset_remote,transfer_sizes)
+                # self.merged_local, self.merged_remote, self.merged_sizes=self.merge_contiguous_blocks_fast_v2(offset_local,offset_remote,transfer_sizes)
+                self.merged_local, self.merged_remote, self.merged_sizes=self.merge_contiguous_blocks(offset_local,offset_remote,transfer_sizes)
+
                 t4=time.perf_counter()
                 logger.info(f"merge time v2 {t4-t3}, old {t2-t1}")
                 # assert (tmp1==self.merged_local)
@@ -1891,8 +1899,8 @@ class MoRIIOConnectorWorker:
                 # assert (k2==self.merged_remote)
                 # assert (k3==self.merged_sizes)
             a,b,c=self.this_layer_write_meta_offset()
-            if self.tp_rank==0:
-                qqq=0
+            # if self.tp_rank==0:
+            #     qqq=0
             if use_batch:
                 # self.moriio_wrapper.read_remote_data(transfer_sizes,offset_local, offset_remote,sess_idx)
                 
@@ -1901,7 +1909,7 @@ class MoRIIOConnectorWorker:
                 #     print(c[ii]/1024)
                 # time.sleep(0.2)
                 # self.moriio_wrapper.waiting_for_read_complete()
-                logger.info(f"{sess_idx =} +{str(c)}+{str(a)}+{str(b)}")
+                # logger.info(f"{sess_idx =} +{str(c)}+{str(a)}+{str(b)}")
                 self.moriio_wrapper.write_remote_data(c,a, b,sess_idx)
                 # self.moriio_wrapper.waiting_for_read_complete()
 
@@ -2216,7 +2224,7 @@ class MoRIIOConnectorWorker:
             # use read mode to check
             for idx,local_blkid in enumerate(local_block_ids):
                 assert(local_blkid==remote_block_ids[idx])
-
+         
            
             # logger.error(f"zovlog:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
             stride = self.kv_caches[layer_name].stride()
