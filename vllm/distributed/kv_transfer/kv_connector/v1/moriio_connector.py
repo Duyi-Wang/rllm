@@ -2001,7 +2001,7 @@ class MoRIIOConnectorWorker:
                         print("!!!!",transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
                         print("!!!!",transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
                 a,b,c=self.merge_contiguous_blocks(offset_local,offset_remote,transfer_sizes)
-                
+                # a,b,c=offset_local,offset_remote,transfer_sizes
                 if use_batch:
                     # self.moriio_wrapper.read_remote_data(transfer_sizes,offset_local, offset_remote,sess_idx)
                     
