@@ -2,7 +2,7 @@
 # curl -X POST -s http://10.235.192.61:36367/v1/completions -H "Content-Type: application/json" -d '{"model": "deepseek-ai/DeepSeek-R1","prompt": "Hi,how are you?","max_tokens": 100,"temperature": 0, "top_k":1}' | awk -F'"' '{print $22}'
 
 
-curl -X POST -s http://127.0.0.1:10001/v1/completions -H "Content-Type: application/json" -d '{"model": "deepseek-ai/DeepSeek-R1","prompt": "the us is ?","max_tokens": 10,"temperature": 0, "top_k":1}' | awk -F'"' '{print $22}'
+curl -X POST -s http://127.0.0.1:10001/v1/completions -H "Content-Type: application/json" -d '{"model": "QWEN","prompt": "the us is ?","max_tokens": 10,"temperature": 0, "top_k":1}' | awk -F'"' '{print $22}'
 
 
 # curl -X POST -s http://127.0.0.1:10001/v1/completions -H "Content-Type: application/json" -d '{"model": "deepseek-ai/DeepSeek-R1","prompt": "the us is ?","max_tokens": 32000,"temperature": 0, "top_k":1}' | awk -F'"' '{print $22}'
