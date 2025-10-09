@@ -183,7 +183,7 @@ class MoRIIOWrapper():
     def write_remote_data(self,transfer_size_byte,local_offset = 0,remote_offset = 0, sess_idx=0):
         assert self.remote_memory_metadata is not None,"You have not register remote memory data!"
         assert self.local_memory_registered,"You have not register local memory data!"
-        write_uid=self.moriio_engine.allocate_transfer_uid()+self.tp_rank*100000
+        write_uid=self.moriio_engine.allocate_transfer_uid()
         # print(write_uid)
         transfer_status = self.sessiones[sess_idx].batch_write(
              local_offset, 
@@ -304,7 +304,7 @@ class MoRIIOWrapper():
                                     print_cur_time(f"!!!zovlog:D received write cache complete req id {msg}")
                                     self.done_write_cache_req_ids.append(msg)
                                     
-                                    # logger.info(f"{self.debug_id=} {str(self.get_all_hash(self.debug_id))}")
+                                    logger.info(f"{self.debug_id=} {str(self.get_all_hash(self.debug_id))}")
                                     self.debug_id+=1
                                     # time.sleep(5)
                     
@@ -343,9 +343,9 @@ class MoRIIOWrapper():
             self.ctx = zmq.Context()
             # path = make_zmq_path("tcp", host, self.notify_port)
             self.sock = make_zmq_socket(ctx=self.ctx,
-                                path=path,
-                                socket_type=zmq.DEALER,
-                                bind=False)
+                            path=path,
+                            socket_type=zmq.DEALER,
+                            bind=False)
             # with zmq_ctx(zmq.DEALER, path) as sock:
         for req in req_ids_:
             assert isinstance(req,str)
@@ -1119,7 +1119,7 @@ class MoRIIOConnectorWorker:
 
         # Send query for the request.
         with zmq_ctx(zmq.DEALER, path) as sock:
-            # logger.info(f"zovlog:=======> prepare send msg to P INSTAZNCE")
+            logger.info(f"prepare send msg  INSTAZNCE: {path}")
             sock.send(GET_META_MSG)
             # logger.info(f"zovlog:=======> send finished,prepare recvive")
             received_frame = sock.recv_multipart()
@@ -1811,10 +1811,11 @@ class MoRIIOConnectorWorker:
         if self._is_first_layer(layer_name):
             whilewait_time2=time.perf_counter()
             logger.info(f"!!!!!!wait remote allocate time {whilewait_time2-whilewait_time}")
+            logger.info(f"mymy {local_block_ids =},{remote_block_ids = }")
+
         if GLOBAL_MORIIO_MODE==MoRIIOMode.READ:
             return
-        layerwise=True
-        logger.info(f"mymy {local_block_ids =},{remote_block_ids = }")
+        layerwise=False
         
         use_batch=True
         if not self.builded_write_session:
@@ -1855,6 +1856,7 @@ class MoRIIOConnectorWorker:
             sz=self.kv_caches[layer_name].element_size()
             transfer_size_byte=blksize * hn * hs * sz
             # remote_block_ids=local_block_ids
+            
 
             #TODO GPT-oss etc case
             if self._is_first_layer(layer_name):
@@ -1887,8 +1889,8 @@ class MoRIIOConnectorWorker:
 
                 # tmp1,tmp2,tmp3=self.merge_contiguous_blocks_fast(offset_local,offset_remote,transfer_sizes)
                 t3=time.perf_counter()
-                # self.merged_local, self.merged_remote, self.merged_sizes=self.merge_contiguous_blocks_fast_v2(offset_local,offset_remote,transfer_sizes)
-                self.merged_local, self.merged_remote, self.merged_sizes=self.merge_contiguous_blocks(offset_local,offset_remote,transfer_sizes)
+                self.merged_local, self.merged_remote, self.merged_sizes=self.merge_contiguous_blocks_fast_v2(offset_local,offset_remote,transfer_sizes)
+                # self.merged_local, self.merged_remote, self.merged_sizes=self.merge_contiguous_blocks(offset_local,offset_remote,transfer_sizes)
 
                 t4=time.perf_counter()
                 logger.info(f"merge time v2 {t4-t3}, old {t2-t1}")
@@ -2017,6 +2019,7 @@ class MoRIIOConnectorWorker:
                 bl.append(b)
                 cl.append(c)
                 sl.append(sess_idx)
+                sess_idx+=1
             # time.sleep(15)
 
             # 结束计时
@@ -2025,12 +2028,14 @@ class MoRIIOConnectorWorker:
             # 计算耗时
             print(f"耗时：{end - start:.4f} 秒")
             time.sleep(3)
-
-            for inb in range(len(al)):
-                self.moriio_wrapper.write_remote_data(cl[inb],al[inb],bl[inb],sl[inb])
+            if use_batch:
+                for inb in range(len(al)):
+                    self.moriio_wrapper.write_remote_data(cl[inb],al[inb],bl[inb],sl[inb])
             self.moriio_wrapper.waiting_for_read_complete()
+            self.moriio_wrapper.send_notify(request_id)
+
             end2=time.perf_counter()
-            time.sleep(3)
+            # time.sleep(3)
             print(f"纯传输耗时：{end2 - end:.4f} 秒")
 
             return
@@ -2177,8 +2182,8 @@ class MoRIIOConnectorWorker:
         # logger.info(f"zovlog:========> start read blocks {local_block_ids = },{remote_block_ids = },{dst_engine_id = },{request_id = }")
         # return
         # 每一层的对应blkid都需要传输
-        # if GLOBAL_MORIIO_MODE==MoRIIOMode.WRITE:
-        #     return
+        if GLOBAL_MORIIO_MODE==MoRIIOMode.WRITE:
+            return
         # if GLOBAL_MORIIO_MODE == MoRIIOMode.WRITE:
         #         return 
         start = time.perf_counter()
