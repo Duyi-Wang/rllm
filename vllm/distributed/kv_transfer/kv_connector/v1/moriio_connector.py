@@ -304,7 +304,7 @@ class MoRIIOWrapper():
                                     print_cur_time(f"!!!zovlog:D received write cache complete req id {msg}")
                                     self.done_write_cache_req_ids.append(msg)
                                     
-                                    logger.info(f"{self.debug_id=} {str(self.get_all_hash(self.debug_id))}")
+                                    # logger.info(f"{self.debug_id=} {str(self.get_all_hash(self.debug_id))}")
                                     self.debug_id+=1
                                     # time.sleep(5)
                     
@@ -1836,11 +1836,11 @@ class MoRIIOConnectorWorker:
         # ...existing code...
         ###################################
         # important debug code
-        self.debug_cache.append((layer_name, (self.kv_caches[layer_name][:,local_block_ids[0],:,:,:].sum())))
-# # ...existing code...
-        if (len(self.debug_cache)-26)%27==0:
-#         if (len(self.debug_cache)-62)%63==0:
-            cccccc=0
+#         self.debug_cache.append((layer_name, (self.kv_caches[layer_name][:,local_block_ids[0],:,:,:].sum())))
+# # # ...existing code...
+#         if (len(self.debug_cache)-26)%27==0:
+# #         if (len(self.debug_cache)-62)%63==0:
+#             cccccc=0
         ###################################
 
         if layerwise:
@@ -2213,11 +2213,11 @@ class MoRIIOConnectorWorker:
         cl=[]
         sl=[] #26+27*n
         for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
-            self.debug_cache.append((layer_name, (self.kv_caches[layer_name][:,local_block_ids[0],:,:,:].sum())))
-            if (len(self.debug_cache)-26)%27==0: 
-            # if (len(self.debug_cache)-62)%63==0:
+            # self.debug_cache.append((layer_name, (self.kv_caches[layer_name][:,local_block_ids[0],:,:,:].sum())))
+            # if (len(self.debug_cache)-26)%27==0: 
+            # # if (len(self.debug_cache)-62)%63==0:
 
-                cccccccc=0
+            #     cccccccc=0
                 
             if GLOBAL_MORIIO_MODE == MoRIIOMode.WRITE:
                 continue
