@@ -236,11 +236,11 @@ class MoRIIOWrapper():
                 raise
             
     def get_hash(self,n,local_block_ids):
-        return self.kv_caches[list(self.kv_caches.keys())[n]][:,local_block_ids,:,:,:].sum()
+        return (self.kv_caches[list(self.kv_caches.keys())[n]][0,local_block_ids,:,:,:].sum().item(),self.kv_caches[list(self.kv_caches.keys())[n]][1,local_block_ids,:,:,:].sum().item())
     def get_all_hash(self,local_block_ids):
         hash_list = []
         for n in range(len(self.kv_caches)):
-            hash_list.append(self.get_hash(n,local_block_ids).item())
+            hash_list.append(self.get_hash(n,local_block_ids))
         return hash_list
     def async_wait_reqid(self,kv_caches=None):
         # assert self.remote_engine_ip is not None,"remote engine ip is None!"
@@ -1815,7 +1815,7 @@ class MoRIIOConnectorWorker:
 
         if GLOBAL_MORIIO_MODE==MoRIIOMode.READ:
             return
-        layerwise=False
+        layerwise=True
         
         use_batch=True
         if not self.builded_write_session:
@@ -1912,9 +1912,12 @@ class MoRIIOConnectorWorker:
                 # time.sleep(0.2)
                 # self.moriio_wrapper.waiting_for_read_complete()
                 # logger.info(f"{sess_idx =} +{str(c)}+{str(a)}+{str(b)}")
-                self.moriio_wrapper.write_remote_data(c,a, b,sess_idx)
-                # self.moriio_wrapper.waiting_for_read_complete()
+                # time.sleep(0.1)
+                torch.cuda.synchronize()
 
+                self.moriio_wrapper.write_remote_data(c,a, b,sess_idx)
+                self.moriio_wrapper.waiting_for_read_complete()
+                c=0
                 # self.moriio_wrapper.waiting_for_read_complete()
                 # time.sleep(0.2)
             else:
@@ -1925,6 +1928,8 @@ class MoRIIOConnectorWorker:
                     # print("bbbb",c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
                     self.moriio_wrapper.write_remote_data_s(c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
                     # self.moriio_wrapper.waiting_for_read_complete()
+                self.moriio_wrapper.waiting_for_read_complete()
+
 
             if self._is_last_layer(layer_name):
                     # time.sleep(0.1)
