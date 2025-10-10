@@ -303,8 +303,8 @@ class MoRIIOWrapper():
                                     # torch.distributed.barrier(get_tp_group().device_group)
                                     print_cur_time(f"!!!zovlog:D received write cache complete req id {msg}")
                                     self.done_write_cache_req_ids.append(msg)
-                                    
-                                    logger.info(f"{self.debug_id=} {str(self.get_all_hash(self.debug_id))}")
+                                    #only for MHA/GQA
+                                    # logger.info(f"{self.debug_id=} {str(self.get_all_hash(self.debug_id))}")
                                     self.debug_id+=1
                                     # time.sleep(5)
                     
@@ -1843,13 +1843,27 @@ class MoRIIOConnectorWorker:
 # #         if (len(self.debug_cache)-62)%63==0:
 #             cccccc=0
         ###################################
+        is_mla=False
+        blksize,hn,hs = 0,0,0
+        ktov_stride,block_stride=0,0
+        stride = self.kv_caches[layer_name].stride()
 
         if layerwise:
-            _,blknum,blksize,hn,hs = self.kv_cache_shape
+            if len(self.kv_cache_shape)==3:
+                is_mla=True
+                blknum,blksize,hs=self.kv_cache_shape
+                hn=1
+                block_stride = stride[0]
+                ktov_stride=None
+
+            else:
+                _,blknum,blksize,hn,hs = self.kv_cache_shape
+                ktov_stride = stride[0]
+                block_stride = stride[1]
+            
             sess_idx = list(self.layer_name_to_local_kv_cache_metadata.keys()).index(layer_name)
             
             local_kv_cache_metadata=self.layer_name_to_local_kv_cache_metadata[layer_name]
-            stride = self.kv_caches[layer_name].stride()
             offset_local=[]
             offset_remote=[]
             transfer_sizes=[]
@@ -1857,22 +1871,25 @@ class MoRIIOConnectorWorker:
             transfer_size_byte=blksize * hn * hs * sz
             # remote_block_ids=local_block_ids
             
-
+           
             #TODO GPT-oss etc case
             if self._is_first_layer(layer_name):
                 for idx,local_blkid in enumerate(local_block_ids):
-                    offset_k_local = sz * (0 * stride[0] + local_blkid * stride[1])
-                    offset_v_local = sz* (1 * stride[0] + local_blkid * stride[1])
-                    offset_k_remote = sz * (0 * stride[0] + remote_block_ids[idx] * stride[1])
-                    offset_v_remote = sz * (1 * stride[0] + remote_block_ids[idx] * stride[1])
-                    offset_local.append(offset_v_local)
-                    offset_remote.append(offset_v_remote)
-                    transfer_sizes.append(transfer_size_byte)
-
-                
+                    offset_k_local = sz * ( local_blkid * block_stride)
+                    offset_k_remote = sz * ( remote_block_ids[idx] * block_stride)
                     offset_local.append(offset_k_local)
                     offset_remote.append(offset_k_remote)
                     transfer_sizes.append(transfer_size_byte)
+
+                    if not is_mla:
+                        offset_v_local = sz* (1 * ktov_stride+ local_blkid * block_stride)
+                        offset_v_remote = sz * (1 * ktov_stride+ remote_block_ids[idx] *block_stride)
+                        offset_local.append(offset_v_local)
+                        offset_remote.append(offset_v_remote)
+                        transfer_sizes.append(transfer_size_byte)
+
+                
+               
             
 
                     if not use_batch:
