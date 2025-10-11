@@ -43,7 +43,8 @@ if TYPE_CHECKING:
     from vllm.attention.backends.abstract import AttentionMetadata
     from vllm.v1.core.kv_cache_manager import KVCacheBlocks
     from vllm.v1.request import Request
-
+from dataclasses import dataclass, field
+from queue import Queue, Empty
 Transfer = tuple[int, float]  # (xfer_handle, start_time)
 EngineId = str
 ReqId = str
@@ -52,6 +53,17 @@ POP_DONE_RECV = b"pop_done_recv"
 OVER = b"OVER"
 from enum import Enum  # 添加这行
 
+@dataclass
+class WriteTask:
+    request_id: str
+    dst_engine_id: str
+    local_block_ids: list[int]
+    remote_block_ids_hint: list[int] | None   # 可能为 None, 等待分配
+    layer_name: str
+    kv_layer: torch.Tensor
+    enqueue_time: float = field(default_factory=time.perf_counter)
+    retried: int = 0
+    
 class ROLE(Enum):
     PRODUCER = "producer"
     CONSUMER = "consumer"
@@ -1015,7 +1027,157 @@ class MoRIIOConnectorWorker:
         # With heterogeneous TP, P must wait for all assigned D TP workers to
         # finish reading before safely freeing the blocks.
         self.consumer_notification_counts_by_req = defaultdict[ReqId, int](int)
+        
+        
+        
+        
+        ####write worker###
+        self._write_task_q: "Queue[WriteTask]" = Queue()
+        self._write_worker_started = False
+        self._write_worker_lock = threading.Lock()
+        self._deferred_tasks: list[WriteTask] = []
+        ###
+    
 
+    def _ensure_write_worker(self):
+        if self._write_worker_started:
+            return
+        with self._write_worker_lock:
+            if self._write_worker_started:
+                return
+            t = threading.Thread(target=self._write_worker_loop, daemon=True, name="moriio-write-worker")
+            t.start()
+            self._write_worker_started = True
+            
+    def schedule_write_blocks(self,
+                            request_id: str,
+                            dst_engine_id: str,
+                            local_block_ids: list[int],
+                            remote_block_ids: list[int] | None,
+                            layer_name: str,
+                            kv_layer: torch.Tensor):
+        """主线程调用：只入队，不阻塞。"""
+        self._ensure_write_worker()
+        task = WriteTask(
+            request_id=request_id,
+            dst_engine_id=dst_engine_id,
+            local_block_ids=local_block_ids,
+            remote_block_ids_hint=remote_block_ids,
+            layer_name=layer_name,
+            kv_layer=kv_layer,
+        )
+        self._write_task_q.put(task)
+        
+    def _write_worker_loop(self):
+        """后台线程：轮询 + 条件等待 + 处理 / 延迟重试。"""
+        SLEEP_MIN = 0.001
+        REQUEUE_DELAY = 0.01
+        while True:
+            # 先尝试处理延迟任务（检查是否就绪）
+            still_defer: list[WriteTask] = []
+            if self._deferred_tasks:
+                for task in self._deferred_tasks:
+                    if self._remote_blocks_ready(task):
+                        self._execute_write_task(task)
+                    else:
+                        still_defer.append(task)
+                self._deferred_tasks = still_defer
+
+            try:
+                task = self._write_task_q.get(timeout=0.01)
+            except Empty:
+                # 无新任务且没有延迟任务 => 继续 loop
+                continue
+
+            if not self._remote_blocks_ready(task):
+                # 远端 block 还没到 → 推入延迟列表
+                task.retried += 1
+                self._deferred_tasks.append(task)
+                # time.sleep(SLEEP_MIN)
+                continue
+
+            self._execute_write_task(task)
+
+    def _execute_write_task(self, task: WriteTask):
+        """原 _write_blocks 主体（去掉 while 等待部分），只做真正传输。"""
+        request_id = task.request_id
+        local_block_ids = task.local_block_ids
+        remote_block_ids = (self.moriio_wrapper
+                            .done_remote_allocate_req_dict
+                            .get(request_id, task.remote_block_ids_hint))
+        if remote_block_ids is None:
+            return  # 防御
+
+        layer_name = task.layer_name
+        kv_layer = task.kv_layer
+
+        if GLOBAL_MORIIO_MODE == MoRIIOMode.READ:
+            return
+        layerwise = True
+        use_batch = True
+
+        if not self.builded_write_session:
+            for ln, local_meta in self.layer_name_to_local_kv_cache_metadata.items():
+                self.moriio_wrapper.set_local_memory_metadata(local_meta[0])
+                self.moriio_wrapper.set_remote_memory_metadata(
+                    self.layer_name_to_remote_kv_cache_metadata[ln][0])
+                self.moriio_wrapper.build_session()
+            self.builded_write_session = True
+
+        stride = self.kv_caches[layer_name].stride()
+        is_mla = (len(self.kv_cache_shape) == 3)
+
+        if layerwise:
+            if is_mla:
+                blknum, blksize, hs = self.kv_cache_shape
+                hn = 1
+                block_stride = stride[0]
+                ktov_stride = None
+            else:
+                _, blknum, blksize, hn, hs = self.kv_cache_shape
+                ktov_stride = stride[0]
+                block_stride = stride[1]
+
+            sess_idx = list(self.layer_name_to_local_kv_cache_metadata.keys()).index(layer_name)
+            sz = self.kv_caches[layer_name].element_size()
+            transfer_size_byte = blksize * hn * hs * sz
+
+            if self._is_first_layer(layer_name):
+                per_block = 1 if is_mla else 2
+                total = len(local_block_ids) * per_block
+                offset_local = [0] * total
+                offset_remote = [0] * total
+                transfer_sizes = [transfer_size_byte] * total
+                w = 0
+                for i, lb in enumerate(local_block_ids):
+                    rb = remote_block_ids[i]
+                    # K
+                    offset_local[w] = sz * (lb * block_stride)
+                    offset_remote[w] = sz * (rb * block_stride)
+                    w += 1
+                    if not is_mla:
+                        # V
+                        offset_local[w] = sz * (1 * ktov_stride + lb * block_stride)
+                        offset_remote[w] = sz * (1 * ktov_stride + rb * block_stride)
+                        w += 1
+                self.merged_local, self.merged_remote, self.merged_sizes = \
+                    self.merge_contiguous_blocks_fast_v2(
+                        offset_local, offset_remote, transfer_sizes, assume_sorted=True)
+
+            a, b, c = self.this_layer_write_meta_offset()
+            if use_batch:
+                torch.cuda.synchronize()
+                self.moriio_wrapper.write_remote_data(c, a, b, sess_idx)
+                self.moriio_wrapper.waiting_for_read_complete()
+            else:
+                for idx in range(len(a)):
+                    self.moriio_wrapper.write_remote_data_s(c[idx], a[idx], b[idx], sess_idx)
+                self.moriio_wrapper.waiting_for_read_complete()
+
+            if self._is_last_layer(layer_name):
+                self.moriio_wrapper.waiting_for_read_complete()
+                self.moriio_wrapper.send_notify(request_id)
+        
     def _ping(self,zmq_context):
         index = 1
         sock = zmq_context.socket(zmq.DEALER)
@@ -1767,14 +1929,25 @@ class MoRIIOConnectorWorker:
             remote_block_ids=meta.remote_block_ids,
         )
     def _write_blocks_for_req(self, req_id: str, meta: ReqMeta,layer_name,kv_layer):
-        self._write_blocks(
+        # self._write_blocks(
+        #     request_id=req_id,
+        #     dst_engine_id=meta.remote_engine_id,
+        #     local_block_ids=meta.local_block_ids,
+        #     remote_block_ids=meta.remote_block_ids,
+        #     layer_name=layer_name,
+        #     kv_layer=kv_layer
+        # )
+        
+        
+        self.schedule_write_blocks(
             request_id=req_id,
             dst_engine_id=meta.remote_engine_id,
             local_block_ids=meta.local_block_ids,
             remote_block_ids=meta.remote_block_ids,
             layer_name=layer_name,
-            kv_layer=kv_layer
-        )
+            kv_layer=kv_layer,
+            )
+        
     def _is_last_layer(self, layer_name):
         if layer_name == list(self.kv_caches.keys())[-1]:
             return True
