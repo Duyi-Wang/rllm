@@ -60,7 +60,6 @@ class WriteTask:
     local_block_ids: list[int]
     remote_block_ids_hint: list[int] | None   # 可能为 None, 等待分配
     layer_name: str
-    kv_layer: torch.Tensor
     enqueue_time: float = field(default_factory=time.perf_counter)
     retried: int = 0
     
@@ -291,6 +290,7 @@ class MoRIIOWrapper():
                             # if GLOBAL_ROLE == ROLE.PRODUCER:
                             with self.lock:
                                 # 可以同时存储req_id和int_list
+                                #TODO 删除这个
                                 self.done_remote_allocate_req.append(req_id)
                                 self.done_remote_allocate_req_dict[req_id] = int_list
                                 b=0
@@ -1064,10 +1064,15 @@ class MoRIIOConnectorWorker:
             local_block_ids=local_block_ids,
             remote_block_ids_hint=remote_block_ids,
             layer_name=layer_name,
-            kv_layer=kv_layer,
         )
         self._write_task_q.put(task)
         
+    def _remote_blocks_ready(self, task: WriteTask) -> bool:
+        rid = task.request_id
+        if rid in self.moriio_wrapper.done_remote_allocate_req:
+            return True
+        # 没准备好：快速返回（不 busy-wait）
+        return False
     def _write_worker_loop(self):
         """后台线程：轮询 + 条件等待 + 处理 / 延迟重试。"""
         SLEEP_MIN = 0.001
@@ -1109,7 +1114,6 @@ class MoRIIOConnectorWorker:
             return  # 防御
 
         layer_name = task.layer_name
-        kv_layer = task.kv_layer
 
         if GLOBAL_MORIIO_MODE == MoRIIOMode.READ:
             return
@@ -1929,25 +1933,28 @@ class MoRIIOConnectorWorker:
             remote_block_ids=meta.remote_block_ids,
         )
     def _write_blocks_for_req(self, req_id: str, meta: ReqMeta,layer_name,kv_layer):
-        # self._write_blocks(
-        #     request_id=req_id,
-        #     dst_engine_id=meta.remote_engine_id,
-        #     local_block_ids=meta.local_block_ids,
-        #     remote_block_ids=meta.remote_block_ids,
-        #     layer_name=layer_name,
-        #     kv_layer=kv_layer
-        # )
+        no_blocking=True
+    
         
+        if no_blocking:
+            self.schedule_write_blocks(
+                request_id=req_id,
+                dst_engine_id=meta.remote_engine_id,
+                local_block_ids=meta.local_block_ids,
+                remote_block_ids=meta.remote_block_ids,
+                layer_name=layer_name,
+                kv_layer=kv_layer,
+                )
         
-        self.schedule_write_blocks(
+        else:
+            self._write_blocks(
             request_id=req_id,
             dst_engine_id=meta.remote_engine_id,
             local_block_ids=meta.local_block_ids,
             remote_block_ids=meta.remote_block_ids,
             layer_name=layer_name,
-            kv_layer=kv_layer,
+            kv_layer=kv_layer
             )
-        
     def _is_last_layer(self, layer_name):
         if layer_name == list(self.kv_caches.keys())[-1]:
             return True
