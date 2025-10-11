@@ -222,7 +222,12 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
             reduce_indptr,
             reduce_final_map,
             reduce_partial_map,
-            split_params=split_params
+            # split_params=split_params,
+            kv_granularity=max(page_size, 16),
+            max_seqlen_qo=max_seqlen_qo,
+            uni_seqlen_qo=max_seqlen_qo,
+            fast_mode=1,
+            topk=-1,
         )
 
 
