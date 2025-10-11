@@ -67,6 +67,9 @@ class MoRIIOMode(Enum):
 GLOBAL_MORIIO_MODE = MoRIIOMode.WRITE
 logger = init_logger(__name__)
 def print_cur_time(strr):
+    debug=False
+    if not debug:
+        return
     from datetime import datetime
 
     now = datetime.now()
@@ -288,24 +291,24 @@ class MoRIIOWrapper():
                         msg = msg.decode("UTF-8")
                         if  msg.startswith("cmpl"):
                                 # assert 0,"P instance received error req id data"
-                            if GLOBAL_ROLE==ROLE.PRODUCER:
-                                # torch.distributed.barrier(get_tp_group().device_group)
-
-                                # P节点执行   
-                                with self.lock:  #可以释放page
-
-                                    logger.info(f"zovlog:P received red id {msg} for release")
-                                    self.done_req_ids.append(msg)
-                            # D节点执行
-                            else:
-                            # elif GLOBAL_ROLE==ROLE.CONSUMER:
-                                with self.lock:   
+                            with self.lock:  
+                                if GLOBAL_ROLE==ROLE.PRODUCER:
                                     # torch.distributed.barrier(get_tp_group().device_group)
-                                    print_cur_time(f"!!!zovlog:D received write cache complete req id {msg}")
-                                    self.done_write_cache_req_ids.append(msg)
-                                    
-                                    # logger.info(f"{self.debug_id=} {str(self.get_all_hash(self.debug_id))}")
-                                    self.debug_id+=1
+
+                                    # P节点执行   
+                                    #可以释放page
+
+                                        logger.info(f"zovlog:P received red id {msg} for release")
+                                        self.done_req_ids.append(msg)
+                                # D节点执行
+                                else:
+                                # elif GLOBAL_ROLE==ROLE.CONSUMER:
+                                        # torch.distributed.barrier(get_tp_group().device_group)
+                                        print_cur_time(f"!!!zovlog:D received write cache complete req id {msg}")
+                                        self.done_write_cache_req_ids.append(msg)
+                                        
+                                        # logger.info(f"{self.debug_id=} {str(self.get_all_hash(self.debug_id))}")
+                                        self.debug_id+=1
                                     # time.sleep(5)
                     
                     
@@ -349,7 +352,7 @@ class MoRIIOWrapper():
             # with zmq_ctx(zmq.DEALER, path) as sock:
         for req in req_ids_:
             assert isinstance(req,str)
-            print(f"zovlog: sending notify to P...req_ids_ = {req_ids_},path = {path}")
+            # print(f"zovlog: sending notify to P...req_ids_ = {req_ids_},path = {path}")
             self.sock.send(req.encode("utf-8"))
             # print(f"zovlog: sending notify to P finished")
     
@@ -510,6 +513,7 @@ class MoRIIOConnector(KVConnectorBase_V1):
 
     def start_load_kv(self, forward_context: "ForwardContext",
                       **kwargs) -> None:
+        
         if GLOBAL_MORIIO_MODE==MoRIIOMode.WRITE:
             if GLOBAL_ROLE==ROLE.CONSUMER:
                 self.connector_worker.moriio_wrapper.async_wait_reqid()
@@ -645,7 +649,7 @@ class MoRIIOConnectorScheduler:
             "type": "remote_blocks"
         }
         serialized_data = msgpack.dumps(data)
-        logger.info(f"zovlog: sending block slots with data to P...req_id = {req_id}, , path = {path}")
+        # logger.info(f"zovlog: sending block slots with data to P...req_id = {req_id}, , path = {path}")
         self.sock.send(serialized_data)
     def update_state_after_alloc(self, request: "Request", # 包含remote使用到的blockid
                                  blocks: "KVCacheBlocks", # local 分配好的blockid
@@ -831,6 +835,7 @@ class MoRIIOConnectorWorker:
         self.block_size = vllm_config.cache_config.block_size
         self.kv_transfer_config = vllm_config.kv_transfer_config
         self.is_producer = self.kv_transfer_config.is_kv_producer
+        
         if self.is_producer:
             GLOBAL_ROLE=ROLE.PRODUCER
         else: 
@@ -1584,7 +1589,7 @@ class MoRIIOConnectorWorker:
             done_sending, done_recving = set(), self.moriio_wrapper.pop_finished_write_req_ids()
         if len(done_recving)!=0:
             p=0
-            print_cur_time("finish"+str(self.finished_int)+"   ")
+            # print_cur_time("finish"+str(self.finished_int)+"   ")
         # torch.distributed.barrier()
         self.finished_int+=1
         return done_sending, done_recving
@@ -1810,8 +1815,8 @@ class MoRIIOConnectorWorker:
                 b=0
         if self._is_first_layer(layer_name):
             whilewait_time2=time.perf_counter()
-            logger.info(f"!!!!!!wait remote allocate time {whilewait_time2-whilewait_time}")
-            logger.info(f"mymy {local_block_ids =},{remote_block_ids = }")
+            # logger.info(f"!!!!!!wait remote allocate time {whilewait_time2-whilewait_time}")
+            # logger.info(f"mymy {local_block_ids =},{remote_block_ids = }")
 
         if GLOBAL_MORIIO_MODE==MoRIIOMode.READ:
             return
@@ -1910,7 +1915,7 @@ class MoRIIOConnectorWorker:
                 # self.merged_local, self.merged_remote, self.merged_sizes=self.merge_contiguous_blocks(offset_local,offset_remote,transfer_sizes)
 
                 t4=time.perf_counter()
-                logger.info(f"merge time v2 {t4-t3}, old {t2-t1}")
+                # logger.info(f"merge time v2 {t4-t3}, old {t2-t1}")
                 # assert (tmp1==self.merged_local)
                 # assert (tmp2==self.merged_remote)
                 # assert (tmp3==self.merged_sizes)
@@ -1955,15 +1960,13 @@ class MoRIIOConnectorWorker:
                 
                 # self.moriio_wrapper.done_req_ids.append(request_id)
 
-                logger.info(f"send notify to D")
-                # torch.distributed.barrier(get_tp_group().device_group)
-                # if self.tp_rank==0:
-                #     ppp=0
+                # logger.info(f"send notify to D")
+           
                 self.moriio_wrapper.send_notify(request_id)
-                logger.info(f"send notify to D end")
+                # logger.info(f"send notify to D end")
               
                     
-                print_cur_time("!!!!last layer write time ")
+                # print_cur_time("!!!!last layer write time ")
         elif not layerwise:
         
             
