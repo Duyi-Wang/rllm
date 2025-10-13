@@ -324,7 +324,7 @@ class MoRIIOWrapper():
                                         print_cur_time(f"!!!zovlog:D received write cache complete req id {msg}")
                                         self.done_write_cache_req_ids.append(msg)
                                         
-                                        logger.info(f"{self.debug_id=} {str(self.get_all_hash(self.debug_id))}")
+                                        # logger.info(f"{self.debug_id=} {str(self.get_all_hash(self.debug_id))}")
                                         self.debug_id+=1
                                     # time.sleep(5)
                     
@@ -2710,7 +2710,7 @@ def zmq_ctx(socket_type: Any, addr: str) -> Iterator[zmq.Socket]:
     ctx: Optional[zmq.Context] = None
     try:
         ctx = zmq.Context()  # type: ignore[attr-defined]
-        logger.info(f"MMMMCreating ZMQ socket: {addr} with type {socket_type}")
+        # logger.info(f"MMMMCreating ZMQ socket: {addr} with type {socket_type}")
         yield make_zmq_socket(ctx=ctx,
                               path=addr,
                               socket_type=socket_type,
