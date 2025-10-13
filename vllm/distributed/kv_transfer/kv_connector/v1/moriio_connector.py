@@ -173,7 +173,7 @@ class MoRIIOWrapper():
     
     
     def build_session(self):
-        self.sessiones.append(self.moriio_engine.create_session(self.local_memory_metadata, self.remote_memory_metadata))
+        return self.moriio_engine.create_session(self.local_memory_metadata, self.remote_memory_metadata)
 
 
 
@@ -200,12 +200,12 @@ class MoRIIOWrapper():
             self.moriio_engine.allocate_transfer_uid())
       
         self.transfer_status.append(transfer_status)
-    def write_remote_data(self,transfer_size_byte,local_offset = 0,remote_offset = 0, sess_idx=0):
+    def write_remote_data(self,transfer_size_byte,local_offset = 0,remote_offset = 0, session=None):
         assert self.remote_memory_metadata is not None,"You have not register remote memory data!"
         assert self.local_memory_registered,"You have not register local memory data!"
         write_uid=self.moriio_engine.allocate_transfer_uid()
         # print(write_uid)
-        transfer_status = self.sessiones[sess_idx].batch_write(
+        transfer_status = session.batch_write(
              local_offset, 
              remote_offset, 
             transfer_size_byte,
@@ -471,9 +471,9 @@ class MoRIIOConnector(KVConnectorBase_V1):
 
     def __init__(self, vllm_config: VllmConfig, role: KVConnectorRole):
         assert vllm_config.kv_transfer_config is not None
-        assert vllm_config.kv_transfer_config.engine_id is not None
-        self.engine_id: EngineId = vllm_config.kv_transfer_config.engine_id
-
+        # assert vllm_config.kv_transfer_config.engine_id is not None
+        # self.engine_id: EngineId = vllm_config.kv_transfer_config.engine_id
+        self.engine_id= str(get_ip())+":"+str(vllm_config.kv_transfer_config.kv_connector_extra_config['handshake_port'])
         if role == KVConnectorRole.SCHEDULER:
             self.connector_scheduler: Optional[MoRIIOConnectorScheduler] = \
                 MoRIIOConnectorScheduler(vllm_config, self.engine_id)
@@ -930,7 +930,7 @@ class MoRIIOConnectorWorker:
 
         self.remote_kv_cache_metadata = []
         self.remote_kv_cache_size = []
-        self.layer_name_to_remote_kv_cache_metadata:dict[str, List[Any]] = dict()
+        self.layer_name_to_remote_kv_cache_metadata:dict[str,dict[str, List[Any]]] = dict()
         self.slot_size_bytes = 0
 
         self.load_kv_flag = False # False 代表从未load过
@@ -1016,7 +1016,7 @@ class MoRIIOConnectorWorker:
         self.block_window_per_layer: list[Optional[int]] = []
         self.use_mla = self.model_config.use_mla
         self.builded_session = False
-        self.builded_write_session =False
+        self.builded_write_session : defaultdict[str, list] = defaultdict(list)
         self._write_session_lock = threading.Lock()
         self.debug_cache=[]
         backend = get_attn_backend(self.model_config.get_head_size(),
@@ -1124,7 +1124,17 @@ class MoRIIOConnectorWorker:
                 continue
 
             self._execute_write_task(task)
-
+    def _get_builded_session(self,remote_engine_id):
+        if remote_engine_id not in self.builded_write_session:
+            cur_remote_engine_sessiones=[]
+            for ln, local_meta in self.layer_name_to_local_kv_cache_metadata.items():
+                self.moriio_wrapper.set_local_memory_metadata(local_meta[0])
+                self.moriio_wrapper.set_remote_memory_metadata(
+                self.layer_name_to_remote_kv_cache_metadata[remote_engine_id][ln][0])
+                cur_remote_engine_sessiones.append(self.moriio_wrapper.build_session())
+            self.builded_write_session[remote_engine_id]=cur_remote_engine_sessiones
+        return self.builded_write_session[remote_engine_id]
+            # self.builded_write_session = True
     def _execute_write_task(self, task: WriteTask):
         """原 _write_blocks 主体（去掉 while 等待部分），只做真正传输。"""
         request_id = task.request_id
@@ -1143,15 +1153,17 @@ class MoRIIOConnectorWorker:
             return
         layerwise = True
         use_batch = True
+        
+        sessiones=self._get_builded_session(task.dst_engine_id)
         # with self._write_session_lock:
-        if not self.builded_write_session:
-            # torch.cuda.synchronize()
-            for ln, local_meta in self.layer_name_to_local_kv_cache_metadata.items():
-                self.moriio_wrapper.set_local_memory_metadata(local_meta[0])
-                self.moriio_wrapper.set_remote_memory_metadata(
-                    self.layer_name_to_remote_kv_cache_metadata[ln][0])
-                self.moriio_wrapper.build_session()
-            self.builded_write_session = True
+        # if not self.builded_write_session:
+        #     # torch.cuda.synchronize()
+        #     for ln, local_meta in self.layer_name_to_local_kv_cache_metadata.items():
+        #         self.moriio_wrapper.set_local_memory_metadata(local_meta[0])
+        #         self.moriio_wrapper.set_remote_memory_metadata(
+        #             self.layer_name_to_remote_kv_cache_metadata[ln][0])
+        #         self.moriio_wrapper.build_session()
+        #     self.builded_write_session = True
 
         stride = self.kv_caches[layer_name].stride()
         is_mla = (len(self.kv_cache_shape) == 3)
@@ -1201,7 +1213,7 @@ class MoRIIOConnectorWorker:
                 # torch.cuda.synchronize()
                 task.event.synchronize()
                 # logger.info(f"write {layer_name=}, {remote_block_ids=}, {a=}, {b=}, {sess_idx=}")
-                self.moriio_wrapper.write_remote_data(c, a, b, sess_idx)
+                self.moriio_wrapper.write_remote_data(c, a, b, sessiones[sess_idx])
                 request_info.writes_done+=1
                 # self.moriio_wrapper.waiting_for_read_complete()
                 
@@ -1346,10 +1358,10 @@ class MoRIIOConnectorWorker:
 
             # Ensure engine id matches.
             # pass for write
-            # if metadata.engine_id != expected_engine_id:
-            #     raise RuntimeError(f"Remote MoRIIO agent engine ID mismatch. "
-            #                        f"Expected {expected_engine_id},"
-            #                        f"received {metadata.engine_id}.")
+            if metadata.engine_id != expected_engine_id:
+                raise RuntimeError(f"Remote MoRIIO agent engine ID mismatch. "
+                                   f"Expected {expected_engine_id},"
+                                   f"received {metadata.engine_id}.")
 
             # Register Remote agent.
             # remote_agent_name = self.add_remote_agent(metadata, p_remote_rank,remote_tp_size)
@@ -1368,7 +1380,7 @@ class MoRIIOConnectorWorker:
             if len(received_frame) != 2 or received_frame[0] != b"":
                 assert 0,f"Unexpected frame! {received_frame = }"
             buf = received_frame[1]
-            self.layer_name_to_remote_kv_cache_metadata = pickle.loads(buf)
+            self.layer_name_to_remote_kv_cache_metadata[metadata.engine_id] = pickle.loads(buf)
                 
             setup_agent_time = time.perf_counter()
             logger.debug("MoRIIO handshake: add agent took: %s",setup_agent_time - got_metadata_time)
@@ -1863,6 +1875,8 @@ class MoRIIOConnectorWorker:
         for req_id, meta in metadata.reqs_to_save.items():
             # logger.info(f"log:======> enter save kv for loop,{meta.remote_host = },{meta.remote_port = },{meta.local_block_ids = },{meta.remote_block_ids = },{meta.remote_engine_id = }")
             remote_engine_id = meta.remote_engine_id
+            remote_engine_id = str(meta.remote_host) +":"+ str(meta.remote_handshake_port)
+            meta.remote_engine_id=remote_engine_id
             # logger.debug(
             #     "start_save_kv for request %s from remote engine %s. "
             #     "Num local_block_ids: %s. Num remote_block_ids: %s. ", req_id,
