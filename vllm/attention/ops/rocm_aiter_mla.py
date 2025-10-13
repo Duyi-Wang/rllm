@@ -8,7 +8,7 @@ import torch
 from vllm.platforms import current_platform
 from vllm.utils import direct_register_custom_op, is_torch_equal_or_newer
 import vllm.envs as envs
-from aiter.mla import mla_decode_fwd_dispatch
+from aiter.mla import mla_decode_fwd
 from aiter import per_tensor_quant
 
 def get_aiter_mla_metadata(max_batch_size: int, block_size: int,
@@ -46,13 +46,7 @@ def aiter_mla_decode_fwd(
     work_info_set=None,
     reduce_indptr=None,
     reduce_final_map=None,
-    reduce_partial_map=None,
-
-    # batch_split_table=None,
-    # split_table=None,
-    # splits=None,
-    # q_rope=None,
-    # k_rope=None, 
+    reduce_partial_map=None, 
 ):
     if envs.VLLM_MLA_FP8_PADDING:
         assert q.shape.__len__() == 3, f"q shape: {q.shape}"
@@ -67,7 +61,7 @@ def aiter_mla_decode_fwd(
         qo_indptr_padded = torch.arange(0, (batch_size + 1) * 2, 2, dtype=qo_indptr.dtype, device=qo_indptr.device)
         o_padded = torch.empty((o.shape[0] * 2, o.shape[1], o.shape[2]), dtype=o.dtype, device=o.device).fill_(-1)
         max_seqlen_q_new = 2
-        mla_decode_fwd_dispatch(q_fp8_padded,
+        mla_decode_fwd(q_fp8_padded,
                                 kv_buffer.view(-1, 1, 1, q.shape[-1]),
                                 o_padded,
                                 qo_indptr_padded,
@@ -90,7 +84,7 @@ def aiter_mla_decode_fwd(
                                 )
         o[:] = o_padded[1::2]  # Extract every second element
     else:
-        mla_decode_fwd_dispatch(q,
+        mla_decode_fwd(q,
                                 kv_buffer.view(-1, 1, 1, q.shape[-1]),
                                 o,
                                 qo_indptr,
@@ -138,9 +132,9 @@ def mla_decode_fwd_impl(
     # q_rope: Optional[torch.Tensor] = None,
     # k_rope: Optional[torch.Tensor] = None,
 ) -> None:
-    from aiter.mla import mla_decode_fwd_dispatch
+    from aiter.mla import mla_decode_fwd
 
-    mla_decode_fwd_dispatch(q,
+    mla_decode_fwd(q,
                             kv_buffer.view(-1, 1, 1, q.shape[-1]),
                             o,
                             qo_indptr,
@@ -158,9 +152,6 @@ def mla_decode_fwd_impl(
                             reduce_indptr=reduce_indptr,
                             reduce_final_map=reduce_final_map,
                             reduce_partial_map=reduce_partial_map,
-                            # batch_split_table=batch_split_table,
-                            # split_table=split_table,
-                            # cu_num=splits,
                             )
 
 
@@ -184,12 +175,6 @@ def mla_decode_fwd_fake(
     reduce_indptr: Optional[torch.Tensor] = None,
     reduce_final_map: Optional[torch.Tensor] = None,
     reduce_partial_map: Optional[torch.Tensor] = None,
-
-    # batch_split_table: Optional[torch.Tensor] = None,
-    # split_table: Optional[torch.Tensor] = None,
-    # splits: Optional[torch.Tensor] = None,
-    # q_rope: Optional[torch.Tensor] = None,
-    # k_rope: Optional[torch.Tensor] = None,
 ) -> None:
     pass
 

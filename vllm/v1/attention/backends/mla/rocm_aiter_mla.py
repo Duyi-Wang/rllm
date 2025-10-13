@@ -175,19 +175,10 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
                                      dtype=torch.int32,
                                      device=device)
 
-        # num_kv_splits_indptr = torch.empty(200, dtype=torch.int32, device=block_table.device)
-        # batch_split_table = torch.empty(480, dtype=torch.int32, device=block_table.device)
-        # split_table = torch.empty(480, dtype=torch.int32, device=block_table.device)
-        # splits = torch.empty(1, dtype=torch.int32, device=block_table.device)
- 
         import aiter
         max_seqlen_qo = 1
         num_kv_splits_indptr = None
-        # work_indptr = None
-        # work_info_set = None
-        # reduce_indptr = None
-        # reduce_final_map = None
-        # reduce_partial_map = None
+
 
         # if max_seqlen_qo == 1:
         # aiter.get_mla_metadata_impl(paged_kv_indptr, num_kv_splits_indptr, batch_split_table, split_table, splits)
@@ -341,9 +332,6 @@ class AiterMLAImpl(MLACommonImpl[AiterMLAMetadata]):
                              attn_metadata.decode.reduce_indptr,
                              attn_metadata.decode.reduce_final_map,
                              attn_metadata.decode.reduce_partial_map,
-                             # attn_metadata.decode.batch_split_table,
-                             # attn_metadata.decode.split_table,
-                             # attn_metadata.decode.splits,
                              )
 
         return o, None
