@@ -60,9 +60,15 @@ class WriteTask:
     local_block_ids: list[int]
     remote_block_ids_hint: list[int] | None   # 可能为 None, 等待分配
     layer_name: str
+    event: torch.cuda.Event
     enqueue_time: float = field(default_factory=time.perf_counter)
     retried: int = 0
-    
+@dataclass
+class RemoteAllocInfo:
+    block_ids: list[int]
+    writes_done: int = 0
+    transfer_offset: tuple[list[int], list[int], list[int]]  = None
+
 class ROLE(Enum):
     PRODUCER = "producer"
     CONSUMER = "consumer"
@@ -116,7 +122,7 @@ class MoRIIOWrapper():
         self.lock = threading.Lock()
         self.done_req_ids = []
         self.done_remote_allocate_req = []
-        self.done_remote_allocate_req_dict: dict[str, list[int]] = {}
+        self.done_remote_allocate_req_dict: dict[str, RemoteAllocInfo] = {}
         self.done_write_cache_req_ids = []
         self.notify_thread = None
         self.sock = None
@@ -205,8 +211,8 @@ class MoRIIOWrapper():
             transfer_size_byte,
             write_uid
             )
-      
-        self.transfer_status.append(transfer_status)
+        with self.lock:
+            self.transfer_status.append(transfer_status)
     def write_remote_data_s(self,transfer_size_byte,local_offset = 0,remote_offset = 0, sess_idx=0):
         assert self.remote_memory_metadata is not None,"You have not register remote memory data!"
         assert self.local_memory_registered,"You have not register local memory data!"
@@ -216,8 +222,8 @@ class MoRIIOWrapper():
              remote_offset, 
             transfer_size_byte,
             self.moriio_engine.allocate_transfer_uid())
-      
-        self.transfer_status.append(transfer_status)
+        with self.lock:
+            self.transfer_status.append(transfer_status)
 
 
     def waiting_for_read_complete(self):
@@ -292,8 +298,7 @@ class MoRIIOWrapper():
                                 # 可以同时存储req_id和int_list
                                 #TODO 删除这个
                                 self.done_remote_allocate_req.append(req_id)
-                                self.done_remote_allocate_req_dict[req_id] = int_list
-                                b=0
+                                self.done_remote_allocate_req_dict[req_id] = RemoteAllocInfo(int_list)
                             # else:
                             #     assert False,"Only P node should receive this type of message!"
                                 
@@ -319,7 +324,7 @@ class MoRIIOWrapper():
                                         print_cur_time(f"!!!zovlog:D received write cache complete req id {msg}")
                                         self.done_write_cache_req_ids.append(msg)
                                         
-                                        # logger.info(f"{self.debug_id=} {str(self.get_all_hash(self.debug_id))}")
+                                        logger.info(f"{self.debug_id=} {str(self.get_all_hash(self.debug_id))}")
                                         self.debug_id+=1
                                     # time.sleep(5)
                     
@@ -388,6 +393,7 @@ class MoRIIOWrapper():
         with self.lock:
             done_remote_allocate =set(self.done_remote_allocate_req)
             self.done_remote_allocate_req= []
+            self.done_remote_allocate_req_dict= {}
         return done_remote_allocate
 
     
@@ -1011,6 +1017,7 @@ class MoRIIOConnectorWorker:
         self.use_mla = self.model_config.use_mla
         self.builded_session = False
         self.builded_write_session =False
+        self._write_session_lock = threading.Lock()
         self.debug_cache=[]
         backend = get_attn_backend(self.model_config.get_head_size(),
                                    self.model_config.dtype,
@@ -1058,12 +1065,27 @@ class MoRIIOConnectorWorker:
                             kv_layer: torch.Tensor):
         """主线程调用：只入队，不阻塞。"""
         self._ensure_write_worker()
+        # stream = torch.cuda.current_stream(kv_layer.device)
+        
+        
+        # stream=torch.cuda.current_stream()
+        event = torch.cuda.Event()
+        # event.record(stream)
+        # event.synchronize()
+        
+        
+        
+        torch.cuda.synchronize()
+        
+
+
         task = WriteTask(
             request_id=request_id,
             dst_engine_id=dst_engine_id,
             local_block_ids=local_block_ids,
             remote_block_ids_hint=remote_block_ids,
             layer_name=layer_name,
+            event=event
         )
         self._write_task_q.put(task)
         
@@ -1107,19 +1129,20 @@ class MoRIIOConnectorWorker:
         """原 _write_blocks 主体（去掉 while 等待部分），只做真正传输。"""
         request_id = task.request_id
         local_block_ids = task.local_block_ids
-        remote_block_ids = (self.moriio_wrapper
-                            .done_remote_allocate_req_dict
-                            .get(request_id, task.remote_block_ids_hint))
+        # remote_block_ids = (self.moriio_wrapper
+        #                     .done_remote_allocate_req_dict
+        #                     .get(request_id, task.remote_block_ids_hint))
+        remote_block_ids=self.moriio_wrapper.done_remote_allocate_req_dict[request_id].block_ids
         if remote_block_ids is None:
             return  # 防御
 
         layer_name = task.layer_name
-
+    
         if GLOBAL_MORIIO_MODE == MoRIIOMode.READ:
             return
         layerwise = True
         use_batch = True
-
+        # with self._write_session_lock:
         if not self.builded_write_session:
             for ln, local_meta in self.layer_name_to_local_kv_cache_metadata.items():
                 self.moriio_wrapper.set_local_memory_metadata(local_meta[0])
@@ -1146,7 +1169,8 @@ class MoRIIOConnectorWorker:
             sz = self.kv_caches[layer_name].element_size()
             transfer_size_byte = blksize * hn * hs * sz
 
-            if self._is_first_layer(layer_name):
+            # if self._is_first_layer(layer_name):
+            if self.moriio_wrapper.done_remote_allocate_req_dict[request_id].transfer_offset==None:
                 per_block = 1 if is_mla else 2
                 total = len(local_block_ids) * per_block
                 offset_local = [0] * total
@@ -1167,19 +1191,31 @@ class MoRIIOConnectorWorker:
                 self.merged_local, self.merged_remote, self.merged_sizes = \
                     self.merge_contiguous_blocks_fast_v2(
                         offset_local, offset_remote, transfer_sizes, assume_sorted=True)
-
-            a, b, c = self.this_layer_write_meta_offset()
+                self.moriio_wrapper.done_remote_allocate_req_dict[request_id].transfer_offset=self.this_layer_write_meta_offset()
+            a, b, c = self.moriio_wrapper.done_remote_allocate_req_dict[request_id].transfer_offset
             if use_batch:
-                torch.cuda.synchronize()
+                # time.sleep(1)
+                task.event.synchronize()
+                logger.info(f"write {layer_name=}, {remote_block_ids=}, {a=}, {b=}, {sess_idx=}")
                 self.moriio_wrapper.write_remote_data(c, a, b, sess_idx)
-                self.moriio_wrapper.waiting_for_read_complete()
+                self.moriio_wrapper.done_remote_allocate_req_dict[request_id].writes_done+=1
+                # self.moriio_wrapper.waiting_for_read_complete()
+                
+                # task.event.record()
+                # torch.cuda.synchronize()
+
             else:
                 for idx in range(len(a)):
                     self.moriio_wrapper.write_remote_data_s(c[idx], a[idx], b[idx], sess_idx)
                 self.moriio_wrapper.waiting_for_read_complete()
 
-            if self._is_last_layer(layer_name):
+            # if self._is_last_layer(layer_name):# #乱序造成的
+            if self.moriio_wrapper.done_remote_allocate_req_dict[request_id].writes_done==self.num_layers:
+                # time.sleep(5)  # 让出时间片，尽量让 notify 在 write 之后
                 self.moriio_wrapper.waiting_for_read_complete()
+                # time.sleep(1)
+                if self.moriio_wrapper.done_remote_allocate_req_dict[request_id].writes_done!=self.num_layers:
+                    logger.info(f"{self.moriio_wrapper.done_remote_allocate_req_dict[request_id].writes_done}")
                 self.moriio_wrapper.send_notify(request_id)
         
     def _ping(self,zmq_context):
@@ -2003,15 +2039,17 @@ class MoRIIOConnectorWorker:
         layerwise=True
         
         use_batch=True
-        if not self.builded_write_session:
-            for layer_namekk,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
-                stride = self.kv_caches[layer_namekk].stride()
-                # logger.info(f"mapping {layer_name} local memory {local_kv_cache_metadata[0]}, remote memory {self.layer_name_to_remote_kv_cache_metadata[layer_name][0]}")
+        #only one thread build the session
+        with self._write_session_lock:
+            if not self.builded_write_session:
+                for layer_namekk,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
+                    stride = self.kv_caches[layer_namekk].stride()
+                    # logger.info(f"mapping {layer_name} local memory {local_kv_cache_metadata[0]}, remote memory {self.layer_name_to_remote_kv_cache_metadata[layer_name][0]}")
 
-                self.moriio_wrapper.set_local_memory_metadata(local_kv_cache_metadata[0])
-                self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_namekk][0])
-                self.moriio_wrapper.build_session()
-            self.builded_write_session=True
+                    self.moriio_wrapper.set_local_memory_metadata(local_kv_cache_metadata[0])
+                    self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_namekk][0])
+                    self.moriio_wrapper.build_session()
+                self.builded_write_session=True
         # logger.info(f"coco {layer_name = }")
 
         # layername_0=list(self.layer_name_to_local_kv_cache_metadata.items())[0][0]
@@ -2118,6 +2156,7 @@ class MoRIIOConnectorWorker:
                 torch.cuda.synchronize()
 
                 self.moriio_wrapper.write_remote_data(c,a, b,sess_idx)
+                self.moriio_wrapper.done_remote_allocate_req_dict[request_id][1]+=1
                 self.moriio_wrapper.waiting_for_read_complete()
                 c=0
                 # self.moriio_wrapper.waiting_for_read_complete()
@@ -2141,7 +2180,8 @@ class MoRIIOConnectorWorker:
                 # self.moriio_wrapper.done_req_ids.append(request_id)
 
                 # logger.info(f"send notify to D")
-           
+                if self.moriio_wrapper.done_remote_allocate_req_dict[request_id][1]!=28:
+                    c=0
                 self.moriio_wrapper.send_notify(request_id)
                 # logger.info(f"send notify to D end")
               
