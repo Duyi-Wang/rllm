@@ -643,12 +643,12 @@ class MLACommonMetadataBuilder(AttentionMetadataBuilder[M]):
                       num_decode_tokens: int) -> MLACommonDecodeMetadata:
         return MLACommonDecodeMetadata(
             block_table=block_table_tensor,
-            work_metadata=self.runner.work_metadata,
-            work_indptr=self.runner.work_indptr,
-            work_info_set=self.runner.work_info_set,
-            reduce_indptr=self.runner.reduce_indptr,
-            reduce_final_map=self.runner.reduce_final_map,
-            reduce_partial_map=self.runner.reduce_partial_map,
+            work_metadata=work_metadata,
+            work_indptr=work_indptr,
+            work_info_set=work_info_set,
+            reduce_indptr=reduce_indptr,
+            reduce_final_map=reduce_final_map,
+            reduce_partial_map=reduce_partial_map,
             seq_lens=seq_lens_device,
         )
 
