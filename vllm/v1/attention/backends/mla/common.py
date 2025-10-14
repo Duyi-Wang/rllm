@@ -244,13 +244,13 @@ def is_rocm_aiter_fp8bmm_enabled() -> bool:
         and envs.VLLM_ROCM_USE_AITER
 
 
+if envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT:
+    from aiter.ops.triton.fused_qk_concat import fused_qk_rope_cat_and_cache_mla
+
 if is_rocm_aiter_fp8bmm_enabled():
     from aiter.ops.triton.batched_gemm_a8w8_a_per_token_group_prequant_w_per_batched_tensor_quant import (  # noqa: E501 # isort: skip
         batched_gemm_a8w8_a_per_token_group_prequant_w_per_batched_tensor_quant
         as aiter_triton_fp8_bmm)
-
-if envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT:
-    from aiter.ops.triton.fused_qk_concat import fused_qk_rope_cat_and_cache_mla
 
     def dynamic_per_batched_tensor_quant(
             x: torch.Tensor, dtype: torch.dtype = torch.float8_e4m3fn):
