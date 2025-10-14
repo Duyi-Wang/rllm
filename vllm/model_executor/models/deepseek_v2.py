@@ -83,14 +83,7 @@ elif current_platform.is_xpu():
     from vllm._ipex_ops import ipex_ops as ops
 
 logger = init_logger(__name__)
-from vllm.platforms import current_platform
 
-import vllm.envs as envs
-
-if current_platform.is_rocm():
-    VLLM_ROCM_USE_AITER_TRITON_FUSED_RMSNORM_FP8_QUANT=envs.VLLM_ROCM_USE_AITER_TRITON_FUSED_RMSNORM_FP8_QUANT
-else:
-    VLLM_ROCM_USE_AITER_TRITON_FUSED_RMSNORM_FP8_QUANT=False
 
 class DeepseekV2MLP(nn.Module):
 
@@ -129,10 +122,7 @@ class DeepseekV2MLP(nn.Module):
         self.act_fn = SiluAndMul()
 
     def forward(self, x):
-        x_quant_scales = None
-        if isinstance(x, tuple):
-            x, x_quant_scales = x
-        gate_up, _ = self.gate_up_proj(x, x_quant_scales=x_quant_scales)
+        gate_up, _ = self.gate_up_proj(x)
         x = self.act_fn(gate_up)
         x, _ = self.down_proj(x)
         return x
@@ -250,11 +240,6 @@ class DeepseekV2MoE(nn.Module):
             )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        if isinstance(hidden_states, tuple):
-            hidden_states_shared, hidden_states = hidden_states
-        else:
-            hidden_states_shared = hidden_states
-
         num_tokens, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
 
@@ -1076,30 +1061,12 @@ class DeepseekV2DecoderLayer(nn.Module):
         residual: Optional[torch.Tensor],
     ) -> torch.Tensor:
         # Self Attention
-        if VLLM_ROCM_USE_AITER_TRITON_FUSED_RMSNORM_FP8_QUANT:
-            weight = self.input_layernorm.weight
-            eps = self.input_layernorm.variance_epsilon
-            from aiter.ops.triton.fused_fp8_quant import fused_rms_fp8_per_token_quant
-            fp8_dtype = current_platform.fp8_dtype()
-            if residual is None:
-                residual = hidden_states
-                (hidden_states, hidden_states_quant), _, _, _ = fused_rms_fp8_per_token_quant(hidden_states, weight, eps, 
-                                                            None, None, eps, 
-                                                            dtype_quant=fp8_dtype, 
-                                                            res1=None)
-            else:
-                (hidden_states, hidden_states_quant), _, _, residual = fused_rms_fp8_per_token_quant(hidden_states, weight, eps, 
-                                                            None, None, eps, 
-                                                            dtype_quant=fp8_dtype, 
-                                                            res1=residual)
-            hidden_states = (hidden_states, hidden_states_quant)
+        if residual is None:
+            residual = hidden_states.clone()
+            hidden_states = self.input_layernorm(hidden_states)
         else:
-            if residual is None:
-                residual = hidden_states.clone()
-                hidden_states = self.input_layernorm(hidden_states)
-            else:
-                hidden_states, residual = self.input_layernorm(
-                    hidden_states, residual)
+            hidden_states, residual = self.input_layernorm(
+                hidden_states, residual)
         hidden_states = self.self_attn(
             positions=positions,
             hidden_states=hidden_states,

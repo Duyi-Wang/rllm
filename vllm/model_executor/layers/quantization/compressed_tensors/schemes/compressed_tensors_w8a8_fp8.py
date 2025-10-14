@@ -139,8 +139,7 @@ class CompressedTensorsW8A8Fp8(CompressedTensorsScheme):
     def apply_weights(self,
                       layer: torch.nn.Module,
                       x: torch.Tensor,
-                      bias: Optional[torch.Tensor] = None,
-                      x_quant_scales: Optional[torch.Tensor] = None) -> torch.Tensor:
+                      bias: Optional[torch.Tensor] = None) -> torch.Tensor:
 
         if layer.weight_block_size is not None:
             return apply_fp8_block_linear(
@@ -155,5 +154,4 @@ class CompressedTensorsW8A8Fp8(CompressedTensorsScheme):
                                      weight_scale=layer.weight_scale,
                                      out_dtype=self.out_dtype,
                                      input_scale=layer.input_scale,
-                                     bias=bias,
-                                     x_quant_scales=x_quant_scales)
+                                     bias=bias)

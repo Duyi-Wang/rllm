@@ -394,7 +394,6 @@ class Fp8LinearOp:
         input_scale: Optional[torch.Tensor] = None,
         input_scale_ub: Optional[torch.Tensor] = None,
         bias: Optional[torch.Tensor] = None,
-        x_quant_scales: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         # ops.scaled_fp8_quant supports both dynamic and static quant.
         #   If dynamic, layer.input_scale is None and x_scale computed from x.
@@ -415,8 +414,6 @@ class Fp8LinearOp:
                 input_scale,
                 input_scale_ub,
             )
-        elif x_quant_scales is not None:
-                qinput, x_scale = input_2d, x_quant_scales
         else:
             qinput, x_scale = input_2d, input_scale
 
