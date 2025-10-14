@@ -630,12 +630,6 @@ class MLACommonMetadataBuilder(AttentionMetadataBuilder[M]):
         prefill.prefill_chunks = self._fi_prefill_chunks
 
     def _build_decode(self, block_table_tensor: torch.Tensor,
-                      work_metadata: torch.Tensor,
-                      work_indptr: torch.Tensor,
-                      work_info_set: torch.Tensor,
-                      reduce_indptr: torch.Tensor,
-                      reduce_final_map: torch.Tensor,
-                      reduce_partial_map: torch.Tensor,
                       seq_lens_cpu: torch.Tensor,
                       seq_lens_device: torch.Tensor,
                       query_start_loc_cpu: torch.Tensor,
@@ -643,12 +637,6 @@ class MLACommonMetadataBuilder(AttentionMetadataBuilder[M]):
                       num_decode_tokens: int) -> MLACommonDecodeMetadata:
         return MLACommonDecodeMetadata(
             block_table=block_table_tensor,
-            work_metadata=work_metadata,
-            work_indptr=work_indptr,
-            work_info_set=work_info_set,
-            reduce_indptr=reduce_indptr,
-            reduce_final_map=reduce_final_map,
-            reduce_partial_map=reduce_partial_map,
             seq_lens=seq_lens_device,
         )
 
@@ -853,12 +841,6 @@ class MLACommonMetadataBuilder(AttentionMetadataBuilder[M]):
             decode_metadata = self._build_decode(
                 block_table_tensor=block_table_tensor[:num_decodes, ...],
                 seq_lens_cpu=seq_lens_cpu[:num_decodes],
-                work_metadata=self.runner.work_metadata,
-                work_indptr=self.runner.work_indptr,
-                work_info_set=self.runner.work_info_set,
-                reduce_indptr=self.runner.reduce_indptr,
-                reduce_final_map=self.runner.reduce_final_map,
-                reduce_partial_map=self.runner.reduce_partial_map,
                 seq_lens_device=seq_lens[:num_decodes],
                 query_start_loc_cpu=query_start_loc_cpu[:num_decodes + 1],
                 query_start_loc_device=query_start_loc[:num_decodes + 1],
