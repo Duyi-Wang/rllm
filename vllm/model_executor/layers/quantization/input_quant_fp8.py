@@ -5,6 +5,7 @@ from typing import Optional
 import torch
 import torch.nn.functional as F
 
+from vllm import envs
 from vllm import _custom_ops as ops
 from vllm.model_executor.custom_op import CustomOp
 from vllm.model_executor.layers.quantization.utils.quant_utils import (
@@ -46,6 +47,9 @@ class QuantFP8(CustomOp):
         self.group_shape = group_shape
         self.num_token_padding = num_token_padding
         self.column_major_scales = column_major_scales
+        self.use_aiter_and_is_supported = (envs.VLLM_ROCM_USE_AITER
+                                           and envs.VLLM_ROCM_USE_AITER_LINEAR
+                                           and current_platform.is_fp8_fnuz())
 
         self.is_group_quant = group_shape.is_per_group()
         if self.is_group_quant:
@@ -76,6 +80,13 @@ class QuantFP8(CustomOp):
         assert scale_ub is None or (not self.static and self.group_shape
                                     == GroupShape.PER_TOKEN
                                     and scale_ub.numel() == 1)
+        if self.use_aiter_and_is_supported:
+            if self.use_per_token_if_dynamic:
+                return torch.ops.vllm.rocm_aiter_per_token_quant_fp8(
+                    x, scale=scale)
+            else:
+                return torch.ops.vllm.rocm_aiter_per_tensor_quant_fp8(
+                    x, scale=scale)
         return ops.scaled_fp8_quant(
             x,
             scale,

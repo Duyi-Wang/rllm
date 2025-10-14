@@ -1,13 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from typing import Callable, Optional, Union
+from functools import cache
+from typing import Callable, List, Optional, Tuple, Union
 
 import torch
 from packaging import version
 
 from vllm import _custom_ops as ops
 from vllm import envs
+from vllm._aiter_ops import aiter_ops
 from vllm.config import CompilationLevel, get_current_vllm_config
 from vllm.model_executor.layers.quantization.input_quant_fp8 import QuantFP8
 from vllm.model_executor.layers.quantization.utils.quant_utils import (
@@ -27,6 +29,158 @@ TORCH_DEVICE_IDENTITY = None
 USE_ROWWISE_TORCH_SCALED_MM = (current_platform.is_rocm() and version.parse(
     torch.__version__) >= version.parse("2.7")
                                and current_platform.has_device_capability(94))
+
+@cache
+def on_mi3xx() -> bool:
+    GPU_ARCH = torch.cuda.get_device_properties("cuda").gcnArchName
+    return any(arch in GPU_ARCH for arch in ["gfx942", "gfx950"])
+
+@cache
+def use_skinny_gemm() -> bool:
+    return envs.VLLM_ROCM_USE_SKINNY_GEMM
+
+@cache
+def use_aiter_and_is_supported() -> bool:
+    return (envs.VLLM_ROCM_USE_AITER
+            and envs.VLLM_ROCM_USE_AITER_LINEAR
+            and current_platform.is_fp8_fnuz())
+
+
+if current_platform.is_rocm():
+
+    import aiter as rocm_aiter
+    from aiter import get_hip_quant
+
+    aiter_per_tensor_quant = get_hip_quant(rocm_aiter.QuantType.per_Tensor)
+    aiter_per_token_quant = get_hip_quant(rocm_aiter.QuantType.per_Token)
+
+    def rocm_aiter_per_token_quant_fp8_impl(
+        input: torch.Tensor,
+        scale: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        return aiter_per_token_quant(input.contiguous(), scale, rocm_aiter.dtypes.fp8)
+
+    def rocm_aiter_per_token_quant_fp8_fake(
+        input: torch.Tensor,
+        scale: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        quantized = torch.empty_like(input,
+                                     dtype=torch.float8_e4m3fnuz,
+                                     device=input.device)
+        scale_tensor = torch.empty((*input.shape[:-1], 1),
+                                   dtype=torch.float32,
+                                   device=input.device)
+        return quantized, scale_tensor
+
+    def rocm_aiter_per_tensor_quant_fp8_impl(
+        input: torch.Tensor,
+        scale: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        return aiter_per_tensor_quant(input.contiguous(), scale, rocm_aiter.dtypes.fp8)
+
+    def rocm_aiter_per_tensor_quant_fp8_fake(
+        input: torch.Tensor,
+        scale: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        quantized = torch.empty_like(input,
+                                     dtype=torch.float8_e4m3fnuz,
+                                     device=input.device)
+        scale_tensor = torch.empty(1, dtype=torch.float32, device=input.device)
+        return quantized, scale_tensor
+        
+    def rocm_aiter_gemm_a8w8_bpreshuffle_impl(
+            input: torch.Tensor,
+            weight: torch.Tensor,
+            out_dtype: Optional[torch.dtype] = None,
+            scale_a: Optional[torch.Tensor] = None,
+            scale_b: Optional[torch.Tensor] = None) -> torch.Tensor:
+
+        # This AITER function can be used for
+        # - per-token activations + per-channel weights
+        #   e.g. vllm/model_executor/layers/quantization/utils/w8a8_utils.py
+        # accept the weight as # keep the weight as (N, K)
+        # NOTE: The weight has to be shuffled in the
+        # process_weights_after_loading of the CompressedTensorsW8A8Fp8 class
+        from aiter import gemm_a8w8_bpreshuffle_ck
+        m = input.shape[0]
+        n = weight.shape[0]
+        Y = torch.empty(m, n, dtype=out_dtype, device=input.device)
+        gemm_a8w8_bpreshuffle_ck(input, weight, scale_a, scale_b, Y)
+        return Y
+
+    def rocm_aiter_gemm_a8w8_bpreshuffle_fake(
+            input: torch.Tensor,
+            weight: torch.Tensor,
+            out_dtype: Optional[torch.dtype] = None,
+            scale_a: Optional[torch.Tensor] = None,
+            scale_b: Optional[torch.Tensor] = None) -> torch.Tensor:
+
+        m = input.shape[0]
+        n = weight.shape[0]
+        if out_dtype is None:
+            out_dtype = input.dtype
+        return torch.empty((m, n), dtype=out_dtype, device=input.device)
+    
+    direct_register_custom_op(
+        op_name="rocm_aiter_per_token_quant_fp8",
+        op_func=rocm_aiter_per_token_quant_fp8_impl,
+        mutates_args=[],
+        fake_impl=rocm_aiter_per_token_quant_fp8_fake,
+        dispatch_key=current_platform.dispatch_key,
+    )
+
+    direct_register_custom_op(
+        op_name="rocm_aiter_per_tensor_quant_fp8",
+        op_func=rocm_aiter_per_tensor_quant_fp8_impl,
+        mutates_args=[],
+        fake_impl=rocm_aiter_per_tensor_quant_fp8_fake,
+        dispatch_key=current_platform.dispatch_key,
+    )
+
+    direct_register_custom_op(
+        op_name="rocm_aiter_gemm_a8w8_bpreshuffle",
+        op_func=rocm_aiter_gemm_a8w8_bpreshuffle_impl,
+        mutates_args=[],
+        fake_impl=rocm_aiter_gemm_a8w8_bpreshuffle_fake,
+        dispatch_key=current_platform.dispatch_key,
+    )
+
+
+def rocm_aiter_per_token_w8a8_scaled_mm(qinput: torch.Tensor,
+                                        weight: torch.Tensor,
+                                        out_dtype: torch.dtype,
+                                        scale_a: torch.Tensor,
+                                        scale_b: torch.Tensor,
+                                        bias: torch.Tensor,
+                                        input_2d: torch.Tensor,
+                                        output_shape: list) -> torch.Tensor:
+    output_shape = [*qinput.shape[:-1], weight.shape[0]]
+    output = torch.ops.vllm.rocm_aiter_gemm_a8w8_bpreshuffle(
+        qinput, weight, out_dtype=out_dtype, scale_a=scale_a, scale_b=scale_b)
+    if bias is not None:
+        output = output + bias
+
+    return torch.narrow(output, 0, 0, input_2d.shape[0]).view(*output_shape)
+
+
+def rocm_aiter_per_tensor_w8a8_scaled_mm(qinput: torch.Tensor,
+                                         weight: torch.Tensor,
+                                         out_dtype: torch.dtype,
+                                         scale_a: torch.Tensor,
+                                         scale_b: torch.Tensor,
+                                         bias: torch.Tensor,
+                                         input_2d: torch.Tensor,
+                                         output_shape: list) -> torch.Tensor:
+
+    output = aiter_ops.rocm_aiter_tuned_gemm(qinput,
+                                             weight.t(),
+                                             out_dtype=out_dtype,
+                                             scale_a=scale_a,
+                                             scale_b=scale_b,
+                                             bias=bias)
+
+    return torch.narrow(output, 0, 0, input_2d.shape[0]).view(*output_shape)
+
 
 
 def sparse_cutlass_supported() -> bool:
@@ -178,7 +332,7 @@ def rocm_per_tensor_w8a8_scaled_mm_impl(qinput: torch.Tensor,
                                         scale_b: torch.Tensor,
                                         bias: torch.Tensor) -> torch.Tensor:
     from vllm.platforms.rocm import on_mi3xx
-    if envs.VLLM_ROCM_USE_SKINNY_GEMM and on_mi3xx() and \
+    if use_skinny_gemm() and on_mi3xx() and \
             qinput.shape[0] == 1 and \
             qinput.shape[1] % 16 == 0 and \
             ((bias is None) or (bias.dtype == out_dtype)) :
@@ -323,6 +477,8 @@ def dispatch_w8a8_scaled_mm(
 
     if per_tensor_weights and per_tensor_activations:
         if preferred_backend == "rocm":
+            if use_aiter_and_is_supported():
+                return rocm_aiter_per_tensor_w8a8_scaled_mm
             return rocm_per_tensor_w8a8_scaled_mm
         if preferred_backend == "flashinfer":
             return flashinfer_w8a8_scaled_mm
@@ -337,6 +493,8 @@ def dispatch_w8a8_scaled_mm(
     # If torch.scaled_mm supports per-channel (weights) per-token (inputs)
     if not per_tensor_weights and not per_tensor_activations \
             and USE_ROWWISE_TORCH_SCALED_MM:
+        if use_aiter_and_is_supported():
+            return rocm_aiter_per_token_w8a8_scaled_mm
         return torch_per_token_w8a8_scaled_mm
     # Normally, torch.scaled_mm supports per tensor weights + activations only
     # so fallback to naive if per channel or per token
