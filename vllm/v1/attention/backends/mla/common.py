@@ -1774,36 +1774,11 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
 
         # write the latent and rope to kv cache
         q_nope_pe, q_nope_zeros = None, None
-        if (
-            envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT
-            and has_decode
-            and kv_cache.numel() > 0
-        ):
-            if kv_cache.dtype == torch.bfloat16:
-                output_q_nope_zeros = True
-            else:
-                output_q_nope_zeros = False
-                kv_cache = kv_cache.view(torch.float8_e4m3fnuz)
-                
-            q_nope_pe = fused_qk_rope_cat_and_cache_mla(
-                decode_ql_nope,
-                decode_q_pe,
-                k_c_normed.unsqueeze(1),
-                k_pe,
-                kv_cache,
-                attn_metadata.slot_mapping.flatten(),
-                attn_metadata.decode.input_positions,
-                self.cos_cache,
-                self.sin_cache,
-                layer._k_scale,
-                self.is_neox_style,
-                output_q_nope_zeros=output_q_nope_zeros,
-                q_out_dtype=kv_cache.dtype,
-            )
-            if output_q_nope_zeros == True:
-                q_nope_pe, q_nope_zeros = q_nope_pe
-
-        elif kv_cache.numel() > 0:
+        # Note: fused kernel logic will be handled after decode_q_nope is defined
+        # For non-fused path or when there are prefill tokens, cache KV values
+        use_aiter_fused_kernel = (envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT 
+                           and has_decode and not has_prefill)
+        if kv_cache.numel() > 0 and not use_aiter_fused_kernel:
             ops.concat_and_cache_mla(
                 k_c_normed,
                 k_pe.squeeze(1),
@@ -1827,6 +1802,37 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
                 [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
             # Convert from (B, N, P) to (N, B, P)
             decode_q_nope = decode_q_nope.transpose(0, 1)
+
+            # Handle fused kernel logic now that decode_q_nope and decode_q_pe are defined
+            if (
+                envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT
+                and kv_cache.numel() > 0
+            ):
+                if kv_cache.dtype == torch.bfloat16:
+                    output_q_nope_zeros = True
+                else:
+                    output_q_nope_zeros = False
+                    kv_cache = kv_cache.view(torch.float8_e4m3fnuz)
+                    
+                # Use the transpose back to (B, N, P) for the fused kernel
+                decode_q_nope_original = decode_q_nope.transpose(0, 1)
+                q_nope_pe = fused_qk_rope_cat_and_cache_mla(
+                    decode_q_nope_original,
+                    decode_q_pe,
+                    k_c_normed[:num_decode_tokens].unsqueeze(1),
+                    k_pe[:num_decode_tokens],
+                    kv_cache,
+                    attn_metadata.slot_mapping.flatten(),
+                    attn_metadata.decode.input_positions,
+                    self.cos_cache,
+                    self.sin_cache,
+                    layer._k_scale,
+                    self.is_neox_style,
+                    output_q_nope_zeros=output_q_nope_zeros,
+                    q_out_dtype=kv_cache.dtype,
+                )
+                if output_q_nope_zeros == True:
+                    q_nope_pe, q_nope_zeros = q_nope_pe
 
             # Pads the head_dim if necessary (for the underlying kernel)
             if self.q_pad_num_heads is not None:
