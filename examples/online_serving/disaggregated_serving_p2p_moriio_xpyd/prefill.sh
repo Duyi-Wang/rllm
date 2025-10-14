@@ -3,9 +3,11 @@
 # LOG_FILE="logs/vllm_serve_prefill_$(date +'%Y%m%d_%H-%M-%S').log"
 
 set -ex
-export GLOO_SOCKET_IFNAME=ens14np0
-export NCCL_SOCKET_IFNAME=ens14np0
+# export GLOO_SOCKET_IFNAME=ens14np0
+# export NCCL_SOCKET_IFNAME=ens14np0
 
+export GLOO_SOCKET_IFNAME=eth0
+export NCCL_SOCKET_IFNAME=eth0
 export CUDA_VISIBLE_DEVICES=6,7
 export HIP_VISIBLE_DEVICES=6,7
 #export VLLM_LOGGING_CONFIG_PATH=log.conf.json
@@ -27,10 +29,10 @@ export VLLM_ENABLE_DSV3=0
 export SAFETENSORS_FAST_GPU=1   
 export VLLM_TORCH_PROFILER_DIR=/nfs/users/mingzliu/vllm/examples/online_serving/disaggregated_serving_p2p_moriio_xpyd/write_0929
 export CUDA_PROFILE_ACTIVITIES="cuda"
-
+MODEL_PATH=/shared-inference/models_blog/Qwen3-0.6B
 # /apps/data/models/models--Qwen--Qwen3-0.6B/snapshots/e6de91484c29aa9480d55605af694f39b081c455
 # {
- vllm serve /nfs/data/Qwen3-0.6B   \
+ vllm serve  ${MODEL_PATH} \
     -tp 2 \
     --block-size 16 \
     --max_seq_len_to_capture 6144 \
@@ -42,7 +44,7 @@ export CUDA_PROFILE_ACTIVITIES="cuda"
     --gpu-memory-utilization 0.6 \
     --disable-log-request \
     --served-model-name QWEN \
-    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_producer","kv_port":"21001","kv_connector_extra_config":{"proxy_ip":"10.194.132.10","proxy_port":"30001","proxy_ping_port":"36367","local_ping_port":"7777","http_port":"20005","handshake_port":60000,"notify_port":49657}}'
+    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_producer","kv_port":"21001","kv_connector_extra_config":{"proxy_ip":"10.158.215.60","proxy_port":"30001","proxy_ping_port":"36367","local_ping_port":"7777","http_port":"20005","handshake_port":60000,"notify_port":49657}}'
            
            
 #           "--kv-transfer-config={\"kv_connector\":\"MoRIIOConnector\",\"kv_role\":\"kv_producer\",\"kv_port\":\"21001\",\"kv_connector_extra_config\":{\"proxy_ip\":\"127.0.0.1\",\"proxy_port\":\"30001\",\"proxy_ping_port\":\"36367\",\"local_ping_port\":\"7777\",\"http_port\":\"20005\",\"handshake_port\":60000,\"notify_port\":49856}}"        ],

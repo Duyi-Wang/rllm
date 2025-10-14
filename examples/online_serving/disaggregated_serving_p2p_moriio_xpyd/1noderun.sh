@@ -2,8 +2,11 @@
 set -ex
 # export GLOO_SOCKET_IFNAME=ens50f0
 # export NCCL_SOCKET_IFNAME=ens50f0
-export GLOO_SOCKET_IFNAME=ens14np0
-export NCCL_SOCKET_IFNAME=ens14np0
+# export GLOO_SOCKET_IFNAME=ens14np0
+# export NCCL_SOCKET_IFNAME=ens14np0
+
+export GLOO_SOCKET_IFNAME=eth0
+export NCCL_SOCKET_IFNAME=eth0
 export CUDA_VISIBLE_DEVICES=4,5
 export HIP_VISIBLE_DEVICES=4,5
 export VLLM_USE_V1=1 
@@ -11,8 +14,9 @@ export VLLM_ROCM_USE_AITER=1
 export VLLM_ENABLE_DSV3=0  
 export SAFETENSORS_FAST_GPU=1   
 export VLLM_TORCH_PROFILER_DIR=/nfs/users/mingzliu/vllm/examples/online_serving/disaggregated_serving_p2p_moriio_xpyd/write_0929_1node
+MODEL_PATH=/shared-inference/models_blog/Qwen3-0.6B
 
-vllm serve /nfs/data/Qwen3-0.6B \
+vllm serve $MODEL_PATH\
         -tp 1  \
     --block-size 16 \
     --max_seq_len_to_capture 6144 \
