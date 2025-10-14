@@ -89,6 +89,7 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
         assert self.kv_cache_spec.block_size == 1, "AITER MLA" \
             "only supports block size 1."
 
+        self.vllm_config = vllm_config
         self.compilation_config = vllm_config.compilation_config
         max_num_pages_per_req = cdiv(vllm_config.model_config.max_model_len,
                                      self.kv_cache_spec.block_size)
@@ -115,13 +116,29 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
                                           dtype=torch.int32,
                                           device=device)
 
+        # AITER MLA specific persistent buffers
+        self.work_metadata = torch.empty([10],
+                                         dtype=torch.uint64,
+                                         device=device)
+        
+        self.work_indptr = torch.empty([81],
+                                       dtype=torch.int32,
+                                       device=device)
+        self.work_info_set = torch.empty([max_num_reqs * 80, 8],
+                                         dtype=torch.int32,
+                                         device=device)
+        
+        self.reduce_indptr = torch.empty([max_num_reqs + 1],
+                                         dtype=torch.int32,
+                                         device=device)
+        self.reduce_final_map = torch.empty([max_num_reqs, 2],
+                                            dtype=torch.int32,
+                                            device=device)
+        self.reduce_partial_map = torch.empty([max_num_reqs * 80],
+                                              dtype=torch.int32,
+                                              device=device)
+
     def _build_decode(self, block_table_tensor: torch.Tensor,
-                      work_metadata: torch.Tensor,
-                      work_indptr: torch.Tensor,
-                      work_info_set: torch.Tensor,
-                      reduce_indptr: torch.Tensor,
-                      reduce_final_map: torch.Tensor,
-                      reduce_partial_map: torch.Tensor,
                       seq_lens_cpu: torch.Tensor,
                       seq_lens_device: torch.Tensor,
                       query_start_loc_cpu: torch.Tensor,
@@ -190,11 +207,12 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
             batch_size = qo_indptr.shape[0] - 1
             qo_indptr = torch.arange(0, (batch_size + 1) * 2, 2, dtype=qo_indptr.dtype, device=qo_indptr.device)
         # max_seqlen_qo should be set according to the MTP. For example, MTP1 corresponds to max_seqlen_qo=2.
-        if self.runner.speculative_config is not None and self.runner.speculative_config.num_speculative_tokens is not None:
-            max_seqlen_qo = self.runner.speculative_config.num_speculative_tokens + 1
+        speculative_config = self.vllm_config.speculative_config
+        if speculative_config is not None and speculative_config.num_speculative_tokens is not None:
+            max_seqlen_qo = speculative_config.num_speculative_tokens + 1
         else:
             max_seqlen_qo = 1
-        page_size = self.runner.block_size
+        page_size = self.kv_cache_spec.block_size
         split_params = {
             "kv_granularity": max(page_size, 16),
             "max_seqlen_qo": max_seqlen_qo,
@@ -207,12 +225,12 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
             16,   # nhead // nhead_kv,
             1,    # nhead_kv,
             True,
-            work_metadata,
-            work_info_set,
-            work_indptr,
-            reduce_indptr,
-            reduce_final_map,
-            reduce_partial_map,
+            self.work_metadata,
+            self.work_info_set,
+            self.work_indptr,
+            self.reduce_indptr,
+            self.reduce_final_map,
+            self.reduce_partial_map,
             # split_params=split_params,
             kv_granularity=max(page_size, 16),
             max_seqlen_qo=max_seqlen_qo,
@@ -230,12 +248,12 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
             paged_kv_indices=paged_kv_indices,
             paged_kv_last_page_len=paged_kv_last_page_len,
             num_kv_splits_indptr=num_kv_splits_indptr,
-            work_metadata=work_metadata,
-            work_indptr=work_indptr,
-            work_info_set=work_info_set,
-            reduce_indptr=reduce_indptr,
-            reduce_final_map=reduce_final_map,
-            reduce_partial_map=reduce_partial_map,
+            work_metadata=self.work_metadata,
+            work_indptr=self.work_indptr,
+            work_info_set=self.work_info_set,
+            reduce_indptr=self.reduce_indptr,
+            reduce_final_map=self.reduce_final_map,
+            reduce_partial_map=self.reduce_partial_map,
             qo_indptr=qo_indptr)
 
         return attn_metadata
