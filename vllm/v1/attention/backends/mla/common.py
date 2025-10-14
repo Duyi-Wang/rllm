@@ -985,7 +985,7 @@ class MLACommonBaseImpl(MLAAttentionImpl[A], Generic[A]):
         q_pad_num_heads: Optional[int] = None,
         cos_cache: Optional[torch.Tensor] = None,
         sin_cache: Optional[torch.Tensor] = None,
-        rotary_emb_is_neox_style: bool = False
+        is_neox_style: bool = False
     ) -> None:
         if kv_sharing_target_layer_name is not None:
             raise NotImplementedError("KV sharing is not supported for MLA")
@@ -1008,7 +1008,7 @@ class MLACommonBaseImpl(MLAAttentionImpl[A], Generic[A]):
 
         self.cos_cache = cos_cache
         self.sin_cache = sin_cache
-        self.rotary_emb_is_neox_style = rotary_emb_is_neox_style
+        self.is_neox_style = is_neox_style
 
     def process_weights_after_loading(self, act_dtype: torch.dtype):
 
@@ -1125,7 +1125,7 @@ class MLACommonBaseImpl(MLAAttentionImpl[A], Generic[A]):
                         self.cos_cache,
                         self.sin_cache,
                         k_scale,
-                        self.rotary_emb_is_neox_style,
+                        self.is_neox_style,
                         output_q_nope_zeros=True,
                     )
 
@@ -1814,7 +1814,7 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
                 self.cos_cache,
                 self.sin_cache,
                 layer._k_scale,
-                self.rotary_emb_is_neox_style,
+                self.is_neox_style,
                 output_q_nope_zeros=output_q_nope_zeros,
                 q_out_dtype=kv_cache.dtype,
             )

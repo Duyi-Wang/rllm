@@ -122,7 +122,7 @@ class MultiHeadLatentAttention(CustomOp):
             indexer=self.indexer,
             cos_cache=cos_cache,
             sin_cache=sin_cache,
-            rotary_emb_is_neox_style=self.rotary_emb.rotary_emb_is_neox_style
+            is_neox_style=self.rotary_emb.is_neox_style
         )
 
         self.prefix = prefix
