@@ -523,8 +523,6 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
     def _sync_device(self) -> None:
         torch.cuda.synchronize()
 
-        max_seqlen_qo = 2
-
         self.work_metadata = torch.empty([10],
                                        dtype=torch.uint64,
                                        device=self.device)
