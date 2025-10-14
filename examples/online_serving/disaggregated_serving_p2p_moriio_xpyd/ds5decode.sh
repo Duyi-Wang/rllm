@@ -30,7 +30,12 @@ export VLLM_TORCH_PROFILER_DIR=/nfs/users/mingzliu/vllm/examples/online_serving/
 export CUDA_PROFILE_ACTIVITIES="cuda"
 # export VLLM_TORCH_PROFILER_WITH_STACK=0
 # {
-vllm serve /nfs/DeepSeekV3tiny \
+
+MODEL_PATH=/nfs/DeepSeekV3tiny
+
+# MODEL_PATH=/nfs/DeepSeek-V3
+
+vllm serve $MODEL_PATH \
     -tp 8  \
     --block-size 1 \
     --max-num-batched-tokens 8192 \

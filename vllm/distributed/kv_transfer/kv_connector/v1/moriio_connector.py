@@ -596,7 +596,7 @@ class MoRIIOConnectorScheduler:
         self._reqs_need_send: dict[ReqId, float] = {}
         self.sock = None
         self.is_producer = vllm_config.kv_transfer_config.kv_role == "kv_producer"
-
+        self.paths={}
     def get_num_new_matched_tokens(
         self,
         request: "Request",
@@ -656,13 +656,14 @@ class MoRIIOConnectorScheduler:
     #     host = self.remote_engine_ip
         path = make_zmq_path("tcp", host, port)
         #TODO:     make once     
-        # if self.sock is None:
-        self.ctx = zmq.Context()
-        self.sock = make_zmq_socket(ctx=self.ctx,
-                        path=path,
-                        socket_type=zmq.DEALER,
-                        bind=False)
-        
+        if path not in self.paths:
+            ctx = zmq.Context()
+            sock = make_zmq_socket(ctx=ctx,
+                            path=path,
+                            socket_type=zmq.DEALER,
+                            bind=False)
+            self.paths[path]=sock
+
         # 构造要发送的数据结构
         data = {
             "req_id": req_id,
@@ -671,7 +672,7 @@ class MoRIIOConnectorScheduler:
         }
         serialized_data = msgpack.dumps(data)
         # logger.info(f"zovlog: sending block slots with data to P...req_id = {req_id}, , path = {path}")
-        self.sock.send(serialized_data)
+        self.paths[path].send(serialized_data)
     def update_state_after_alloc(self, request: "Request", # 包含remote使用到的blockid
                                  blocks: "KVCacheBlocks", # local 分配好的blockid
                                  num_external_tokens: int,
@@ -1933,6 +1934,9 @@ class MoRIIOConnectorWorker:
         if self.is_producer:
             self.moriio_wrapper.async_wait_reqid()
             return
+        if GLOBAL_MORIIO_MODE==MoRIIOMode.WRITE:
+            return
+        # logger.info(f"zovlog:======> start_load_kv called!")
         # time.sleep(5)
         # logger.info(f"zovlog:======> start load kv,{metadata.reqs_to_recv.items() = }")
         wait_handshage_readd_req=False

@@ -1,5 +1,5 @@
 # ISL=4096
-ISL=16384
+ISL=4096
 #1000有问题,300没问题
 OSL=3
 RATIO=0
@@ -11,7 +11,7 @@ PROMPTS=1
       vllm bench serve  \
         --dataset-name random \
         --model  QWEN \
-          --tokenizer /nfs/data/Qwen3-32B \
+        --tokenizer /nfs/data/Qwen3-32B \
         --random-input-len $ISL \
         --random-output-len $OSL \
         --num-prompt $PROMPTS \

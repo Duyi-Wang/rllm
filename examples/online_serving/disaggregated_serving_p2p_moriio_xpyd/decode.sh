@@ -30,8 +30,8 @@ export VLLM_TORCH_PROFILER_DIR=/nfs/users/mingzliu/vllm/examples/online_serving/
 export CUDA_PROFILE_ACTIVITIES="cuda"
 # export VLLM_TORCH_PROFILER_WITH_STACK=0
 # {
-vllm serve /nfs/data/Qwen3-32B \
-        -tp 1   \
+vllm serve /nfs/data/Qwen3-0.6B \
+        -tp 2   \
         --block-size 16  \
         --max_seq_len_to_capture 6144 \
         --max-num-batched-tokens 6144 \

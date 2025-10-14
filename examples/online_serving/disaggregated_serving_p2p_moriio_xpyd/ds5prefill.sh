@@ -27,11 +27,12 @@ export VLLM_ENABLE_DSV3=1
 export SAFETENSORS_FAST_GPU=1   
 export VLLM_TORCH_PROFILER_DIR=/nfs/users/mingzliu/vllm/examples/online_serving/disaggregated_serving_p2p_moriio_xpyd/write_0929
 export CUDA_PROFILE_ACTIVITIES="cuda"
-
+MODEL_PATH=/nfs/DeepSeekV3tiny
+# MODEL_PATH=/nfs/DeepSeek-V3
 # /apps/data/models/models--Qwen--Qwen3-0.6B/snapshots/e6de91484c29aa9480d55605af694f39b081c455
 # {
- vllm serve /nfs/DeepSeekV3tiny   \
-    -tp 8  \
+ vllm serve $MODEL_PATH   \
+    -tp 8 \
     --block-size 1 \
     --max-num-batched-tokens 8192 \
     --max-model-len 8192 \

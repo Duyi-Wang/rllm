@@ -30,11 +30,11 @@ export CUDA_PROFILE_ACTIVITIES="cuda"
 
 # /apps/data/models/models--Qwen--Qwen3-0.6B/snapshots/e6de91484c29aa9480d55605af694f39b081c455
 # {
- vllm serve /nfs/data/Qwen3-32B   \
-    -tp 1 \
+ vllm serve /nfs/data/Qwen3-0.6B   \
+    -tp 2 \
     --block-size 16 \
-    --max_seq_len_to_capture 61440 \
-    --max-num-batched-tokens 61440 \
+    --max_seq_len_to_capture 6144 \
+    --max-num-batched-tokens 6144 \
     --host 0.0.0.0 \
     --port 20005 \
     --enforce-eager \
