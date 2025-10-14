@@ -61,6 +61,7 @@ class WriteTask:
     remote_block_ids_hint: list[int] | None   # 可能为 None, 等待分配
     layer_name: str
     event: torch.cuda.Event
+    remote_notify_port: int
     enqueue_time: float = field(default_factory=time.perf_counter)
     retried: int = 0
 @dataclass
@@ -420,6 +421,7 @@ class ReqMeta:
     remote_host: str
     remote_port: int
     remote_handshake_port:int
+    remote_notify_port:int
     remote_engine_id: str
     tp_size: int
 
@@ -458,6 +460,7 @@ class MoRIIOConnectorMetadata(KVConnectorMetadata):
             remote_host=kv_transfer_params["remote_host"],
             remote_port=kv_transfer_params["remote_port"],
             remote_handshake_port=kv_transfer_params['remote_handshake_port'],
+            remote_notify_port=kv_transfer_params['remote_notify_port'],
             # P workers don't need to receive tp_size from proxy here.
             tp_size=kv_transfer_params.get("tp_size", 1),
         )
@@ -726,7 +729,8 @@ class MoRIIOConnectorScheduler:
                 # send_no
                 print_cur_time("!!!send_notify_block called!")
                 for tp_index in range(self.tp_size):
-                    cur_port=self.side_notify_port+tp_index
+                    cur_port=request.kv_transfer_params['remote_notify_port']+tp_index
+                    # cur_port=self.side_notify_port+tp_index
                     self.send_notify_block(req_id=request.request_id,int_list=blocks.get_block_ids()[0],host=params.get("remote_host"),port=cur_port)
                 print_cur_time("!!!send_notify_block call finished!")
 
@@ -1062,7 +1066,8 @@ class MoRIIOConnectorWorker:
                             local_block_ids: list[int],
                             remote_block_ids: list[int] | None,
                             layer_name: str,
-                            kv_layer: torch.Tensor):
+                            kv_layer: torch.Tensor,
+                            remote_notify_port:int):
         """主线程调用：只入队，不阻塞。"""
         self._ensure_write_worker()
         # stream = torch.cuda.current_stream(kv_layer.device)
@@ -1085,7 +1090,8 @@ class MoRIIOConnectorWorker:
             local_block_ids=local_block_ids,
             remote_block_ids_hint=remote_block_ids,
             layer_name=layer_name,
-            event=event
+            event=event,
+            remote_notify_port=remote_notify_port
         )
         self._write_task_q.put(task)
         
@@ -1241,7 +1247,7 @@ class MoRIIOConnectorWorker:
         while True:
             try:
                 http_request_address = "http://" + self.request_address +"/v1/completions"
-                data = {"type":"register","role":"P" if self.is_producer else "D","index":str(index),"request_address":http_request_address,"handshake_port":self.handshake_port}
+                data = {"type":"register","role":"P" if self.is_producer else "D","index":str(index),"request_address":http_request_address,"handshake_port":self.handshake_port,"notify_port":self.notify_port}
                 
                 sock.send(msgpack.dumps(data))
                 # print(f"zovlog:====>Sent: {data}")
@@ -1998,6 +2004,7 @@ class MoRIIOConnectorWorker:
                 remote_block_ids=meta.remote_block_ids,
                 layer_name=layer_name,
                 kv_layer=kv_layer,
+                remote_notify_port=meta.remote_notify_port
                 )
         
         else:
