@@ -152,7 +152,6 @@ def rocm_aiter_per_token_w8a8_scaled_mm(qinput: torch.Tensor,
                                         scale_a: torch.Tensor,
                                         scale_b: torch.Tensor,
                                         bias: torch.Tensor,
-                                        input_2d: torch.Tensor,
                                         output_shape: list) -> torch.Tensor:
     output_shape = [*qinput.shape[:-1], weight.shape[0]]
     output = torch.ops.vllm.rocm_aiter_gemm_a8w8_bpreshuffle(
@@ -160,7 +159,7 @@ def rocm_aiter_per_token_w8a8_scaled_mm(qinput: torch.Tensor,
     if bias is not None:
         output = output + bias
 
-    return torch.narrow(output, 0, 0, input_2d.shape[0]).view(*output_shape)
+    return torch.narrow(output, 0, 0, qinput.shape[0]).view(*output_shape)
 
 
 def rocm_aiter_per_tensor_w8a8_scaled_mm(qinput: torch.Tensor,
@@ -169,7 +168,6 @@ def rocm_aiter_per_tensor_w8a8_scaled_mm(qinput: torch.Tensor,
                                          scale_a: torch.Tensor,
                                          scale_b: torch.Tensor,
                                          bias: torch.Tensor,
-                                         input_2d: torch.Tensor,
                                          output_shape: list) -> torch.Tensor:
 
     output = aiter_ops.rocm_aiter_tuned_gemm(qinput,
@@ -179,7 +177,7 @@ def rocm_aiter_per_tensor_w8a8_scaled_mm(qinput: torch.Tensor,
                                              scale_b=scale_b,
                                              bias=bias)
 
-    return torch.narrow(output, 0, 0, input_2d.shape[0]).view(*output_shape)
+    return torch.narrow(output, 0, 0, qinput.shape[0]).view(*output_shape)
 
 
 
