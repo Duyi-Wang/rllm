@@ -949,7 +949,7 @@ class MoRIIOConnectorWorker:
         self.slot_size_bytes = 0
 
         self.load_kv_flag = False # False 代表从未load过
-        self.write_kv_flag=False
+        self.write_kv_flag={}
         self.kv_cache_shape = None
         self.block_shape = None
         self.kv_element_size = 0
@@ -1173,7 +1173,8 @@ class MoRIIOConnectorWorker:
             return
         layerwise = True
         use_batch = True
-        
+        task.event.synchronize()
+
         sessiones=self._get_builded_session(task.dst_engine_id)
         # with self._write_session_lock:
         # if not self.builded_write_session:
@@ -1232,7 +1233,6 @@ class MoRIIOConnectorWorker:
             if use_batch:
                 # time.sleep(1)
                 # torch.cuda.synchronize()
-                task.event.synchronize()
                 # logger.info(f"write {layer_name=}, {remote_block_ids=}, {a=}, {b=}, {sess_idx=}")
                 self.moriio_wrapper.write_remote_data(c, a, b, sessiones[sess_idx])
                 request_info.writes_done+=1
@@ -1442,7 +1442,7 @@ class MoRIIOConnectorWorker:
         def request_ready(_f: Future[Any], entry=(req_id, meta)):
             self._ready_requests.put(entry)
             self.load_kv_flag = True 
-            self.write_kv_flag=True
+            self.write_kv_flag[remote_engine_id]=True
 
       
         fut.add_done_callback(request_ready)
@@ -1925,12 +1925,12 @@ class MoRIIOConnectorWorker:
             
       
         while True:
-            if self._ready_requests.empty() and not self.write_kv_flag: # 第一次进入,需要一直等待
+            if self._ready_requests.empty() and not (remote_engine_id in self.write_kv_flag): # 第一次进入,需要一直等待
                 # logger.info(f"zovlog:==============> {self._ready_requests.empty() = }")
                 # pass
                 continue
                 # return 
-            elif not self._ready_requests.empty() and self.write_kv_flag:
+            elif not self._ready_requests.empty() and (remote_engine_id in self.write_kv_flag):
                 # logger.info(f"zovlog:==============> {self._ready_requests.empty() = }")
                 self._write_blocks_for_req(*self._ready_requests.get_nowait(),layer_name,kv_layer)
                 break
