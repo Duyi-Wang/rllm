@@ -7,15 +7,15 @@ set -ex
 # export NCCL_SOCKET_IFNAME=ens14np0
 export GLOO_SOCKET_IFNAME=eth0
 export NCCL_SOCKET_IFNAME=eth0
-export CUDA_VISIBLE_DEVICES=6,7
-export HIP_VISIBLE_DEVICES=6,7
+export CUDA_VISIBLE_DEVICES=4,5
+export HIP_VISIBLE_DEVICES=4,5
 # export    NCCL_IB_DISABLE=1
 # mkdir -p profiler
 # export VLLM_TORCH_PROFILER_DIR=./profiler
 #export VLLM_LOGGING_CONFIG_PATH=log.conf.json
 #export NCCL_DEBUG=INFO 
 
-
+#机内其他instance ， 改device handshakeport notifyport kvport httport localpingport
 # export NCCL_NCHANNELS_PER_NET_PEER=1
 # export VLLM_RINGBUFFER_WARNING_INTERVAL=500 
 # export VLLM_RPC_TIMEOUT=1800000 
@@ -38,14 +38,14 @@ vllm serve ${MODEL_PATH} \
         --block-size 16  \
         --max_seq_len_to_capture 6144 \
         --max-num-batched-tokens 6144 \
-            --enforce-eager \
+        --enforce-eager \
         --host 0.0.0.0 \
-        --port 40005 \
+        --port 41005 \
         --trust-remote-code \
         --gpu-memory-utilization 0.6\
         --disable-log-request \
         --served-model-name QWEN \
-        --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_consumer","kv_port":"32988","kv_connector_extra_config":{"proxy_ip":"10.158.215.60","proxy_port":"30001","http_port":"40005","local_ping_port":"61011","proxy_ping_port":"36367","handshake_port":60020,"notify_port":49657}}'
+        --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_consumer","kv_port":"7355","kv_connector_extra_config":{"proxy_ip":"10.158.215.60","proxy_port":"30001","http_port":"41005","local_ping_port":"61100","proxy_ping_port":"36367","handshake_port":60030,"notify_port":50657}}'
         
                 #  "--kv-transfer-config={\"kv_connector\":\"MoRIIOConnector\",\"kv_role\":\"kv_consumer\",\"kv_port\":\"32988\",\"kv_connector_extra_config\":{\"proxy_ip\":\"127.0.0.1\",\"proxy_port\":\"30001\",\"http_port\":\"40005\",\"local_ping_port\":\"32567\",\"proxy_ping_port\":\"36367\",\"handshake_port\":60020,\"notify_port\":49657}}"      
 

@@ -198,13 +198,25 @@ async def handle_request():
             return IP_PORT_PATTERN.search(url).groups()
         req_data = await request.get_json()
         st1p5=time.perf_counter()
+        request_id = str(uuid.uuid4())
 
         # print(f"req_data = {req_data}")
-        request_id = str(uuid.uuid4())
-        prefill_instance_endpoint = prefill_instances[request_nums % len(prefill_instances)]
-        decode_instance_endpoint = decode_instances[request_nums % len(decode_instances)]
+        prefill_instance_endpoint=None
+        decode_instance_endpoint=None
+        # print(f"zovlog:-----------> before select instance {prefill_instances=
+        if False:
+        # if len(prefill_instances)==2 and len(decode_instances)==2:
+            index_list=[[0,0],[0,1],[1,0],[1,1]]
+            index=index_list[request_nums % len(index_list)]
+            prefill_instance_endpoint = prefill_instances[index[0]]
+            decode_instance_endpoint = decode_instances[index[1]]
+            print(f"P:{index[0]},D:{index[1]}")
         
-        print(f"******{request_id}******, {prefill_instance_endpoint=}, {decode_instance_endpoint=}, {request_nums=}")
+        else:
+            prefill_instance_endpoint = prefill_instances[request_nums % len(prefill_instances)]
+            decode_instance_endpoint = decode_instances[request_nums % len(decode_instances)]
+        
+        # print(f"******{request_id}******,******{prefill_instance_endpoint=}, {decode_instance_endpoint=}, {request_nums=}")
         dip,dport= extract_ip_port_fast(decode_instance_endpoint['request_address'])
         # preq_data = copy.deepcopy(req_data)
         ip, port = extract_ip_port_fast(prefill_instance_endpoint['request_address'])

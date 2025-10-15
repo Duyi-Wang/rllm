@@ -130,7 +130,7 @@ class MoRIIOWrapper():
         self.sock = None
         self.tp_rank = get_tensor_model_parallel_rank()
         self.sessiones=[]
-        self.has_register_remote_engine = False 
+        self.has_register_remote_engine = False  #no use
         self.kv_caches = None
         self.debug_id=1
         self.paths={}
@@ -908,6 +908,7 @@ class MoRIIOConnectorWorker:
         self.moriio_engine = None
         self._handle_request_thread = None
         self._ping_thread = None
+        engine_suffix =str(self.local_ip) + ":" + str(self.handshake_port)+":tp "+str(self.tp_rank)
         if not self.is_producer:
             self.poller = zmq.Poller()
             self.metadata_socket = self.zmq_context.socket(zmq.ROUTER)
@@ -915,13 +916,13 @@ class MoRIIOConnectorWorker:
             self.poller.register(self.metadata_socket, zmq.POLLIN)
 
             logger.info(f"build IOEngine {self.local_ip},{self.local_kv_port}")
-            self.moriio_engine = IOEngine("consumer",IOEngineConfig(self.local_ip,self.local_kv_port))
+            self.moriio_engine = IOEngine("consumer:"+engine_suffix,IOEngineConfig(self.local_ip,self.local_kv_port))
             self._handle_request_thread = threading.Thread(target = self.handle_proxy_request,daemon=True)
             self._handle_request_thread.start()
         else:
             logger.info(f"build IOEngine {self.local_ip},{self.local_kv_port}")
 
-            self.moriio_engine = IOEngine("producer",IOEngineConfig(self.local_ip,self.local_kv_port))
+            self.moriio_engine = IOEngine("producer:"+engine_suffix,IOEngineConfig(self.local_ip,self.local_kv_port))
         if self._rank == 0 and self.proxy_ip != "":
             self._ping_thread = threading.Thread(target=self._ping,args=(self.zmq_context,),daemon=True)
             self._ping_thread.start() # join?
@@ -1226,6 +1227,7 @@ class MoRIIOConnectorWorker:
                 #         offset_local, offset_remote, transfer_sizes, assume_sorted=True)
                 request_info.transfer_offset=self.merge_contiguous_blocks_fast_v2(
                         offset_local, offset_remote, transfer_sizes, assume_sorted=True)
+
             a, b, c = request_info.transfer_offset
             if use_batch:
                 # time.sleep(1)

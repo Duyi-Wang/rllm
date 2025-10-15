@@ -464,9 +464,9 @@ class MessageQueue:
                         raise RuntimeError("cancelled")
 
                     # if we time out, raise an exception
-                    if (timeout is not None
-                            and time.monotonic() - start_time > timeout):
-                        raise TimeoutError
+                    # if (timeout is not None
+                    #         and time.monotonic() - start_time > timeout):
+                    #     raise TimeoutError
 
                     continue
                 # found a block that is not read by this reader
