@@ -106,6 +106,7 @@ if TYPE_CHECKING:
     VLLM_ROCM_USE_AITER_MOE: bool = True
     VLLM_ROCM_USE_AITER_RMSNORM: bool = True
     VLLM_ROCM_USE_AITER_MLA: bool = True
+    VLLM_ROCM_USE_AITER_MLA_FP8: bool = False
     VLLM_ROCM_USE_AITER_MHA: bool = True
     VLLM_ROCM_USE_AITER_FP4_ASM_GEMM: bool = False
     VLLM_ROCM_USE_TRITON_ROPE: bool = False
@@ -205,7 +206,6 @@ if TYPE_CHECKING:
     VLLM_USE_NCCL_SYMM_MEM: bool = False
     VLLM_NCCL_INCLUDE_PATH: Optional[str] = None
     VLLM_USE_FBGEMM: bool = False
-    VLLM_MLA_FP8_PADDING: bool = False
 
 
 def get_default_cache_root():
@@ -936,6 +936,13 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "VLLM_ROCM_USE_AITER_MLA":
     lambda: (os.getenv("VLLM_ROCM_USE_AITER_MLA", "True").lower() in
              ("true", "1")),
+    
+    # Whether to use aiter mla ops.
+    # By default is disable.
+    "VLLM_ROCM_USE_AITER_MLA_FP8":
+    lambda: (os.getenv("VLLM_ROCM_USE_AITER_MLA_FP8", "False").lower() in
+             ("true", "1")),
+
 
     # Whether to use aiter mha ops.
     # By default is enabled.
@@ -1476,9 +1483,6 @@ environment_variables: dict[str, Callable[[], Any]] = {
     lambda: os.environ.get("VLLM_NCCL_INCLUDE_PATH", None),
     # Flag to enable FBGemm kernels on model execution
     "VLLM_USE_FBGEMM": lambda: bool(int(os.getenv("VLLM_USE_FBGEMM", "0"))),
-    
-    "VLLM_MLA_FP8_PADDING":
-    lambda: bool(int(os.getenv("VLLM_MLA_FP8_PADDING", "0"))),
 }
 
 # --8<-- [end:env-vars-definition]

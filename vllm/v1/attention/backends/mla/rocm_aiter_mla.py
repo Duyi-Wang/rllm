@@ -120,14 +120,14 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
         self.work_metadata = torch.empty([10],
                                          dtype=torch.uint64,
                                          device=device)
-        
+
         self.work_indptr = torch.empty([81],
                                        dtype=torch.int32,
                                        device=device)
         self.work_info_set = torch.empty([max_num_reqs * 80, 8],
                                          dtype=torch.int32,
                                          device=device)
-        
+
         self.reduce_indptr = torch.empty([max_num_reqs + 1],
                                          dtype=torch.int32,
                                          device=device)
@@ -197,15 +197,6 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
         num_kv_splits_indptr = None
 
 
-        # if max_seqlen_qo == 1:
-        # aiter.get_mla_metadata_impl(paged_kv_indptr, num_kv_splits_indptr, batch_split_table, split_table, splits)
-        # if get gpu hang, please use cpu metadata as following:
-        # num_kv_splits_indptr = torch.empty(200, dtype=torch.int32, device=block_table.device)
-        # kv_seq_les = torch.empty(200, dtype=torch.int32, device=block_table.device)
-        # aiter.mla.get_meta_param_balanced(paged_kv_indptr, num_kv_splits_indptr, batch_split_table, split_table, kv_seq_les, splits)
-        if envs.VLLM_MLA_FP8_PADDING:
-            batch_size = qo_indptr.shape[0] - 1
-            qo_indptr = torch.arange(0, (batch_size + 1) * 2, 2, dtype=qo_indptr.dtype, device=qo_indptr.device)
         # max_seqlen_qo should be set according to the MTP. For example, MTP1 corresponds to max_seqlen_qo=2.
         speculative_config = self.vllm_config.speculative_config
         if speculative_config is not None and speculative_config.num_speculative_tokens is not None:
@@ -336,7 +327,7 @@ class AiterMLAImpl(MLACommonImpl[AiterMLAMetadata]):
         # max_seqlen_qo must be 1 except for MTP
         # TODO: Find the best value for MTP
         max_seqlen_qo = 1
-        aiter_mla_decode_fwd(q, kv_buffer, o, 
+        aiter_mla_decode_fwd(q, kv_buffer, o,
                              attn_metadata.decode.qo_indptr,
                              attn_metadata.decode.paged_kv_indptr,
                              attn_metadata.decode.paged_kv_indices,
