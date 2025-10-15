@@ -161,8 +161,8 @@ class MultiHeadLatentAttention(CustomOp):
         k_pe = k_pe.unsqueeze(1)
 
         if envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT:
-            pass
             # the rope operator for decode is now fused with concat_and_cache_mla operator using fused_qk_rope_cat_and_cache_mla
+            self.mla_attn.set_input_positions(positions)
         else:
             q[..., self.qk_nope_head_dim:], k_pe = self.rotary_emb(
                 positions, q[..., self.qk_nope_head_dim:], k_pe)

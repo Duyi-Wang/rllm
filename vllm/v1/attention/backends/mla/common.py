@@ -991,6 +991,8 @@ class MLACommonBaseImpl(MLAAttentionImpl[A], Generic[A]):
         self.cos_cache = cos_cache
         self.sin_cache = sin_cache
         self.is_neox_style = is_neox_style
+        self.positions = None
+
 
     def process_weights_after_loading(self, act_dtype: torch.dtype):
 
@@ -1185,6 +1187,9 @@ class MLACommonBaseImpl(MLAAttentionImpl[A], Generic[A]):
             N, B, V = out.shape
             out.resize_((B, N * V))
             out.copy_(out_new)  # Copy result
+
+        def set_input_positions(self, positions: torch.Tensor):
+            self.positions = positions
 
 
 class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
@@ -1823,7 +1828,7 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
                     k_pe[:num_decode_tokens],
                     kv_cache,
                     attn_metadata.slot_mapping.flatten(),
-                    attn_metadata.decode.input_positions,
+                    self.positions,
                     self.cos_cache,
                     self.sin_cache,
                     layer._k_scale,
