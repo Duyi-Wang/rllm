@@ -9,7 +9,15 @@ from vllm.platforms import current_platform
 from vllm.utils import direct_register_custom_op, is_torch_equal_or_newer
 import vllm.envs as envs
 from aiter.mla import mla_decode_fwd
-from aiter import per_tensor_quant
+
+def dynamic_per_batched_tensor_quant(
+            x: torch.Tensor, dtype: torch.dtype = torch.float8_e4m3fn):
+        DTYPE_MAX = torch.finfo(dtype).max
+        min_val, max_val = x.aminmax()
+        amax = torch.maximum(min_val.abs(), max_val.abs()).clamp(min=1e-10)
+        scale = DTYPE_MAX / amax
+        x_scl_sat = (x * scale).clamp(min=-DTYPE_MAX, max=DTYPE_MAX)
+        return x_scl_sat.to(dtype).contiguous(), scale.float().reciprocal()
 
 def get_aiter_mla_metadata(max_batch_size: int, block_size: int,
                            max_block_per_batch: int,
@@ -49,7 +57,7 @@ def aiter_mla_decode_fwd(
     reduce_partial_map=None,
 ):
     if envs.VLLM_ROCM_USE_AITER_MLA_FP8:
-        q, q_scale = per_tensor_quant(q, quant_dtype=torch.float8_e4m3fnuz)
+        q, q_scale = dynamic_per_batched_tensor_quant(q, dtype=current_platform.fp8_dtype())
         kv_buffer = kv_buffer.to(torch.float8_e4m3fnuz)
         kv_scale = torch.ones([1], dtype=torch.float, device=kv_buffer.device)
     else:
