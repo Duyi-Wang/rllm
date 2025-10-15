@@ -117,8 +117,7 @@ class AttentionFp8StaticQuantPattern(AttentionQuantPattern):
                                       output=output_attn,
                                       layer_name=self.layer_name,
                                       output_scale=None,
-                                      output_block_scale=None,
-                                      input_positions=None)
+                                      output_block_scale=None)
             attn_out_view = RESHAPE_OP(
                 at1[1], [q.shape[0], self.num_heads * self.head_size])
             at2 = auto_functionalized(self.QUANT_OP,
@@ -143,8 +142,7 @@ class AttentionFp8StaticQuantPattern(AttentionQuantPattern):
                                       output=output_attn,
                                       layer_name=self.layer_name,
                                       output_scale=scale,
-                                      output_block_scale=None,
-                                      input_positions=None)
+                                      output_block_scale=None)
             return RESHAPE_OP(at1[1], [-1, self.num_heads * self.head_size])
 
         inputs = [
@@ -193,8 +191,7 @@ class AttentionNvfp4QuantPattern(AttentionQuantPattern):
                                       output=output_attn,
                                       layer_name=self.layer_name,
                                       output_scale=None,
-                                      output_block_scale=None,
-                                      input_positions=None)
+                                      output_block_scale=None)
             attn_out_view = RESHAPE_OP(
                 at1[1], [q.shape[0], self.num_heads * self.head_size])
             at2 = auto_functionalized(self.QUANT_OP,
@@ -224,8 +221,7 @@ class AttentionNvfp4QuantPattern(AttentionQuantPattern):
                                       output=output_attn,
                                       layer_name=self.layer_name,
                                       output_scale=input_scale,
-                                      output_block_scale=output_scale_view,
-                                      input_positions=None)
+                                      output_block_scale=output_scale_view)
             output = RESHAPE_OP(at2[1],
                                 [-1, self.num_heads * self.head_size // 2])
             return output, at2[2]

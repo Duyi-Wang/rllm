@@ -329,7 +329,6 @@ class XFormersAttentionImpl(AttentionImpl):
         output: Optional[torch.Tensor] = None,
         output_scale: Optional[torch.Tensor] = None,
         output_block_scale: Optional[torch.Tensor] = None,
-        input_positions: Optional[torch.Tensor] = None,  # for aiter MLA fused rope+cache
     ) -> torch.Tensor:
         """Forward pass with XFormers.
 

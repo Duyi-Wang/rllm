@@ -87,7 +87,7 @@ class MultiHeadLatentAttention(CustomOp):
             assert hasattr(self.indexer, "topk_tokens")
             self.topk_tokens = self.indexer.topk_tokens
             self.topk_indices_buffer = mla_modules.topk_indices_buffer
-
+            
         cos_cache, sin_cache = self.rotary_emb.cos_sin_cache.chunk(2, dim=-1)
 
         # In the MLA backend, kv_cache includes both k_c and
@@ -175,9 +175,8 @@ class MultiHeadLatentAttention(CustomOp):
             q,
             kv_c_normed,
             k_pe,
-            output_shape=(hidden_states.shape[0], self.num_heads * self.v_head_dim),
-            input_positions=positions,  # for fused rope+cache
-        )
+            output_shape=(hidden_states.shape[0],
+                          self.num_heads * self.v_head_dim))
         return self.o_proj(attn_out)[0]
 
     def forward_cuda(self, *args, **kwargs):
