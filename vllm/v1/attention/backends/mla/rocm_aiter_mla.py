@@ -319,7 +319,7 @@ class AiterMLAImpl(MLACommonImpl[AiterMLAMetadata]):
         o = torch.zeros(B,
                         self.num_heads,
                         self.kv_lora_rank,
-                        dtype=q.dtype,
+                        dtype=q.dtype if q.dtype != torch.float8_e4m3fnuz else torch.bfloat16,
                         device=q.device)
 
         kv_buffer = kv_c_and_k_pe_cache.unsqueeze(2)
