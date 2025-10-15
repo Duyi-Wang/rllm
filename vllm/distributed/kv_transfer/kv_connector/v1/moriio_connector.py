@@ -62,6 +62,7 @@ class WriteTask:
     layer_name: str
     event: torch.cuda.Event
     remote_notify_port: int
+    remote_ip:int
     enqueue_time: float = field(default_factory=time.perf_counter)
     retried: int = 0
 @dataclass
@@ -132,6 +133,7 @@ class MoRIIOWrapper():
         self.has_register_remote_engine = False 
         self.kv_caches = None
         self.debug_id=1
+        self.paths={}
         # self.remote_handshake_port = None # P->D 发送read完毕的reqid
         # self.local_handshake_port = None # D<-P 接收read完毕的reqid
         # self.waiting_for_remote_read_complete_thread = None # P 节点需要在D节点read完成之后才能安全释放blockid,因此这里管理
@@ -343,35 +345,42 @@ class MoRIIOWrapper():
     
     # 使用msgpack序列化
   
-    def send_notify(self,req_ids,meta=None):
+    def send_notify(self,req_ids,remote_ip=None,remote_port=None):
         # logger.info(f"zovlog: enter sending notify to P...req_ids = {req_ids}")
         # if self.tp_rank!=0:
         #     pass
         # return 
         #TODO this should be assert 
-        if self.remote_engine_ip is  None:
-            self.remote_engine_ip=meta.remote_host
-        assert self.notify_port is not None,"remote engine port is not None!"
+        
+        path = make_zmq_path("tcp", remote_ip, str(remote_port))
+        #TODO:     make once     
+        if path not in self.paths:
+            ctx = zmq.Context()
+            sock = make_zmq_socket(ctx=ctx,
+                            path=path,
+                            socket_type=zmq.DEALER,
+                            bind=False)
+            self.paths[path]=sock
+            
+        # if self.remote_engine_ip is  None:
+        #     self.remote_engine_ip=meta.remote_host
+        # assert self.notify_port is not None,"remote engine port is not None!"
+        
         if not isinstance(req_ids,list):
             req_ids_ = [req_ids]
         else:
             req_ids_ = req_ids
         host = self.remote_engine_ip
-        path = make_zmq_path("tcp", host, self.notify_port)
-        
+        #just for debug
+        # path2 = make_zmq_path("tcp", host, self.notify_port)
+        # assert path==path2,f"notify port not match! {path} != {path2}"
         #TODO make on
-        if self.sock is None:
-            self.ctx = zmq.Context()
-            # path = make_zmq_path("tcp", host, self.notify_port)
-            self.sock = make_zmq_socket(ctx=self.ctx,
-                            path=path,
-                            socket_type=zmq.DEALER,
-                            bind=False)
+        sock=self.paths[path]
             # with zmq_ctx(zmq.DEALER, path) as sock:
         for req in req_ids_:
             assert isinstance(req,str)
             # print(f"zovlog: sending notify to P...req_ids_ = {req_ids_},path = {path}")
-            self.sock.send(req.encode("utf-8"))
+            sock.send(req.encode("utf-8"))
             # print(f"zovlog: sending notify to P finished")
     
     def pop_finished_req_ids(self):
@@ -1068,7 +1077,9 @@ class MoRIIOConnectorWorker:
                             remote_block_ids: list[int] | None,
                             layer_name: str,
                             kv_layer: torch.Tensor,
-                            remote_notify_port:int):
+                            remote_notify_port:int,
+                            remote_ip:str
+                            ):
         """主线程调用：只入队，不阻塞。"""
         self._ensure_write_worker()
         # stream = torch.cuda.current_stream(kv_layer.device)
@@ -1092,7 +1103,8 @@ class MoRIIOConnectorWorker:
             remote_block_ids_hint=remote_block_ids,
             layer_name=layer_name,
             event=event,
-            remote_notify_port=remote_notify_port
+            remote_notify_port=remote_notify_port,
+            remote_ip=remote_ip
         )
         self._write_task_q.put(task)
         
@@ -1239,7 +1251,7 @@ class MoRIIOConnectorWorker:
                 # time.sleep(1)
                 # if request_info.writes_done!=self.num_layers:
                 #     logger.info(f"{request_info.writes_done}")
-                self.moriio_wrapper.send_notify(request_id)
+                self.moriio_wrapper.send_notify(request_id,task.remote_ip,task.remote_notify_port+self.tp_rank)
         
     def _ping(self,zmq_context):
         index = 1
@@ -1260,7 +1272,7 @@ class MoRIIOConnectorWorker:
                 logger.info(f"zovlog:===> send failed , unknown error {e}")
             finally:
                 time.sleep(10)
-                index += 1
+                # index += 1
 
     def handle_proxy_request(self):
         if self.is_producer:
@@ -2008,7 +2020,8 @@ class MoRIIOConnectorWorker:
                 remote_block_ids=meta.remote_block_ids,
                 layer_name=layer_name,
                 kv_layer=kv_layer,
-                remote_notify_port=meta.remote_notify_port
+                remote_notify_port=meta.remote_notify_port,
+                remote_ip=meta.remote_host
                 )
         
         else:

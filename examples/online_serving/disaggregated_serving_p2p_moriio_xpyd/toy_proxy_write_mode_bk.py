@@ -39,7 +39,15 @@ counter = count(1)
 def count_print(msg):
     current_count = next(counter)
     print(f"---mingzhilog[{current_count}] : {msg}")
-    
+def _append_whole_dict_unique(target_list, data_dict):
+    new_filtered = {k: v for k, v in data_dict.items() if k != "index"}
+    for existed in target_list:
+        existed_filtered = {k: v for k, v in existed.items() if k != "index"}
+        if existed_filtered == new_filtered:
+            return False
+    target_list.append(data_dict)
+_list_lock = threading.Lock()
+
 def _listen_for_register(hostname, port):
     context = zmq.Context()
     router_socket = context.socket(zmq.ROUTER)
@@ -65,12 +73,15 @@ def _listen_for_register(hostname, port):
             elif data['type'] == "register" and data['role'] == "P":
                 if data['request_address'] not in prefill_instances:
                     # prefill_instances.append(data['request_address'])
-                    prefill_instances.append(data)
+                    with _list_lock:
+                        _append_whole_dict_unique(prefill_instances, data)
+                    # prefill_instances._append_whole_dict_unique(data)
 
             elif data["type"] == "register" and data['role'] == "D":
                 if data['request_address'] not in decode_instances:
                     # decode_instances.append(data['request_address'])
-                    decode_instances.append(data)
+                    with _list_lock:
+                        _append_whole_dict_unique(decode_instances, data)
             # print(f"zovlog:====> recv {data},remote_addr={remote_addr},{prefill_instances = },{decode_instances = }")
 
 def start_service_discovery(hostname, port):
@@ -192,6 +203,8 @@ async def handle_request():
         request_id = str(uuid.uuid4())
         prefill_instance_endpoint = prefill_instances[request_nums % len(prefill_instances)]
         decode_instance_endpoint = decode_instances[request_nums % len(decode_instances)]
+        
+        print(f"******{request_id}******, {prefill_instance_endpoint=}, {decode_instance_endpoint=}, {request_nums=}")
         dip,dport= extract_ip_port_fast(decode_instance_endpoint['request_address'])
         # preq_data = copy.deepcopy(req_data)
         ip, port = extract_ip_port_fast(prefill_instance_endpoint['request_address'])
@@ -240,7 +253,7 @@ async def handle_request():
 
         request_nums += 1
         
-        print(f"{(st4-st3)=},{(st3-st2)=},{(st2-st1)=},{(st1p5-st1)},{(st4-st1)=},request_id={request_id}")
+        # print(f"{(st4-st3)=},{(st3-st2)=},{(st2-st1)=},{(st1p5-st1)},{(st4-st1)=},request_id={request_id}")
         # print(f"zovlog:-----------> quit request")
         return response
     except Exception as e:
