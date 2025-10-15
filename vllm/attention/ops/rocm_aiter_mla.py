@@ -55,10 +55,10 @@ def aiter_mla_decode_fwd(
     reduce_indptr=None,
     reduce_final_map=None,
     reduce_partial_map=None,
+    q_scale_input=None,
 ):
-    if envs.VLLM_ROCM_USE_AITER_MLA_FP8:
-        q, q_scale = dynamic_per_batched_tensor_quant(q, dtype=current_platform.fp8_dtype())
-        kv_buffer = kv_buffer.to(torch.float8_e4m3fnuz)
+    if q.dtype == current_platform.fp8_dtype():
+        q_scale = q_scale_input
         kv_scale = torch.ones([1], dtype=torch.float, device=kv_buffer.device)
     else:
         q_scale = None
@@ -108,6 +108,7 @@ def mla_decode_fwd_impl(
     reduce_indptr: Optional[torch.Tensor] = None,
     reduce_final_map: Optional[torch.Tensor] = None,
     reduce_partial_map: Optional[torch.Tensor] = None,
+    q_scale_input: Optional[torch.Tensor] = None,
 ) -> None:
     from aiter.mla import mla_decode_fwd
 
@@ -155,6 +156,7 @@ def mla_decode_fwd_fake(
     reduce_indptr: Optional[torch.Tensor] = None,
     reduce_final_map: Optional[torch.Tensor] = None,
     reduce_partial_map: Optional[torch.Tensor] = None,
+    q_scale_input: Optional[torch.Tensor] = None,
 ) -> None:
     pass
 

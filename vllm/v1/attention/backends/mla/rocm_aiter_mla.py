@@ -327,6 +327,13 @@ class AiterMLAImpl(MLACommonImpl[AiterMLAMetadata]):
         # max_seqlen_qo must be 1 except for MTP
         # TODO: Find the best value for MTP
         max_seqlen_qo = 1
+
+        q_scale_input = None
+        if hasattr(layer, '_q_scale_float') and layer._q_scale_float != 1.0:
+            q_scale_input = torch.tensor([layer._q_scale_float], dtype=torch.float32, device=q.device)
+        elif hasattr(layer, '_q_scale'):
+            q_scale_input = layer._q_scale.to(q.device)
+        
         aiter_mla_decode_fwd(q, kv_buffer, o,
                              attn_metadata.decode.qo_indptr,
                              attn_metadata.decode.paged_kv_indptr,
@@ -341,6 +348,7 @@ class AiterMLAImpl(MLACommonImpl[AiterMLAMetadata]):
                              attn_metadata.decode.reduce_indptr,
                              attn_metadata.decode.reduce_final_map,
                              attn_metadata.decode.reduce_partial_map,
+                             q_scale_input,
                              )
 
         return o, None
