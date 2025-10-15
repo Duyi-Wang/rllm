@@ -1566,6 +1566,7 @@ def compute_hash() -> str:
         "VLLM_ROCM_USE_AITER_MOE",
         "VLLM_ROCM_USE_AITER_RMSNORM",
         "VLLM_ROCM_USE_AITER_MLA",
+        "VLLM_ROCM_USE_AITER_MLA_FP8",
         "VLLM_ROCM_USE_AITER_MHA",
         "VLLM_ROCM_USE_AITER_FP4_ASM_GEMM",
         "VLLM_ROCM_USE_TRITON_ROPE",
