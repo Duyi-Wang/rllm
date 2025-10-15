@@ -226,21 +226,21 @@ class NCCLLibrary:
         # ncclResult_t ncclCommWindowRegister(
         #   ncclComm_t comm, void* buff, size_t size,
         #   ncclWindow_t* win, int winFlags);
-        Function(
-            "ncclCommWindowRegister",
-            ncclResult_t,
-            [
-                ncclComm_t,
-                buffer_type,
-                ctypes.c_size_t,
-                ctypes.POINTER(ncclWindow_t),
-                ctypes.c_int,
-            ],
-        ),
+        #Function(
+        #    "ncclCommWindowRegister",
+        #    ncclResult_t,
+        #    [
+        #        ncclComm_t,
+        #        buffer_type,
+        #        ctypes.c_size_t,
+        #        ctypes.POINTER(ncclWindow_t),
+        #        ctypes.c_int,
+        #    ],
+        #),
         # ncclResult_t ncclCommWindowDeregister(
         #   ncclComm_t comm, ncclWindow_t win);
-        Function("ncclCommWindowDeregister", ncclResult_t,
-                 [ncclComm_t, ncclWindow_t]),
+        #Function("ncclCommWindowDeregister", ncclResult_t,
+        #         [ncclComm_t, ncclWindow_t]),
     ]
 
     # class attribute to store the mapping from the path to the library
