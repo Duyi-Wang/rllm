@@ -475,6 +475,7 @@ class FlashMLASparseImpl(MLACommonBaseImpl[FlashMLASparseMetadata]):
         output: Optional[torch.Tensor] = None,
         output_scale: Optional[torch.Tensor] = None,
         output_block_scale: Optional[torch.Tensor] = None,
+        input_positions: Optional[torch.Tensor] = None,  # for aiter MLA fused rope+cache
     ) -> torch.Tensor:
         # NOTE(lucas): for the sparse FlashMLA kernels the kernels want to use
         # MQA 576/512 approach for both prefill and decode
