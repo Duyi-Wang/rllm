@@ -1720,6 +1720,7 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
         output: Optional[torch.Tensor] = None,
         output_scale: Optional[torch.Tensor] = None,
         output_block_scale: Optional[torch.Tensor] = None,
+        input_positions: Optional[torch.Tensor] = None, # for fused rope+cache
     ) -> torch.Tensor:
         assert output is not None, "Output tensor must be provided."
 
@@ -1777,7 +1778,7 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
         # Note: fused kernel logic will be handled after decode_q_nope is defined
         # For non-fused path or when there are prefill tokens, cache KV values
         use_aiter_fused_kernel = (envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT 
-                           and has_decode and not has_prefill)
+                           and has_decode and not has_prefill and input_positions is not None)
         if kv_cache.numel() > 0 and not use_aiter_fused_kernel:
             ops.concat_and_cache_mla(
                 k_c_normed,
@@ -1823,7 +1824,7 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
                     k_pe[:num_decode_tokens],
                     kv_cache,
                     attn_metadata.slot_mapping.flatten(),
-                    attn_metadata.decode.input_positions,
+                    input_positions,
                     self.cos_cache,
                     self.sin_cache,
                     layer._k_scale,
