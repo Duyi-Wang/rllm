@@ -98,7 +98,7 @@ def start_service_discovery(hostname, port):
 
 async def send_request_to_prefill(endpoint,req_data,request_id,p_endpoint,pip,pports):
     # print(f"zovlog:======> proxy {endpoint = }")
-    req_data_copy = req_data
+    req_data_copy =copy.deepcopy(req_data)
     
     # 本地做prefill,且decode只需要pull模式,所以prefill不需要在这里知晓远程decode任何信息
    
@@ -204,18 +204,19 @@ async def handle_request():
         prefill_instance_endpoint=None
         decode_instance_endpoint=None
         # print(f"zovlog:-----------> before select instance {prefill_instances=
-        if False:
-        # if len(prefill_instances)==2 and len(decode_instances)==2:
-            index_list=[[0,0],[0,1],[1,0],[1,1]]
+        # if False:
+        if len(prefill_instances)==2 and len(decode_instances)==2:
+            index_list=[[0,0],[1,0],[0,1],[1,1]]
             index=index_list[request_nums % len(index_list)]
             prefill_instance_endpoint = prefill_instances[index[0]]
             decode_instance_endpoint = decode_instances[index[1]]
-            print(f"P:{index[0]},D:{index[1]}")
+            # print(f"P:{index[0]},D:{index[1]}")
         
         else:
+            # assert False, f"prefill_instances or decode_instances not ready,"
             prefill_instance_endpoint = prefill_instances[request_nums % len(prefill_instances)]
             decode_instance_endpoint = decode_instances[request_nums % len(decode_instances)]
-        
+        # print(f"{prefill_instances=},{decode_instances=}")
         # print(f"******{request_id}******,******{prefill_instance_endpoint=}, {decode_instance_endpoint=}, {request_nums=}")
         dip,dport= extract_ip_port_fast(decode_instance_endpoint['request_address'])
         # preq_data = copy.deepcopy(req_data)

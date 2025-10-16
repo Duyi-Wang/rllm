@@ -3,9 +3,10 @@
 # LOG_FILE="logs/vllm_serve_decode_$(date +'%Y%m%d_%H-%M-%S').log"
 pkill -9 python
 set -ex
-export GLOO_SOCKET_IFNAME=ens14np0
-export NCCL_SOCKET_IFNAME=ens14np0
-
+# export GLOO_SOCKET_IFNAME=ens14np0
+# export NCCL_SOCKET_IFNAME=ens14np0
+export GLOO_SOCKET_IFNAME=eth0
+export NCCL_SOCKET_IFNAME=eth0
 # export CUDA_VISIBLE_DEVICES=6,7
 # export HIP_VISIBLE_DEVICES=6,7
 # export    NCCL_IB_DISABLE=1
@@ -31,7 +32,9 @@ export CUDA_PROFILE_ACTIVITIES="cuda"
 # export VLLM_TORCH_PROFILER_WITH_STACK=0
 # {
 
-MODEL_PATH=/nfs/DeepSeekV3tiny
+# MODEL_PATH=/nfs/DeepSeekV3tiny
+MODEL_PATH=/shared-inference/models_blog/DeepSeek-V3
+# MODEL_PATH=/shared-inference/models_blog/DeepSeek-V3-5layer
 
 # MODEL_PATH=/nfs/DeepSeek-V3
 
@@ -47,7 +50,7 @@ vllm serve $MODEL_PATH \
     --enforce-eager \
     --disable-log-request \
     --served-model-name QWEN \
-    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_consumer","kv_port":"32988","kv_connector_extra_config":{"proxy_ip":"10.194.132.10","proxy_port":"30001","http_port":"40005","local_ping_port":"32567","proxy_ping_port":"36367","handshake_port":61700,"notify_port":61800}}'
+    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_consumer","kv_port":"32988","kv_connector_extra_config":{"proxy_ip":"10.158.215.60","proxy_port":"30001","http_port":"40005","local_ping_port":"32567","proxy_ping_port":"36367","handshake_port":61700,"notify_port":61800}}'
         
                 #  "--kv-transfer-config={\"kv_connector\":\"MoRIIOConnector\",\"kv_role\":\"kv_consumer\",\"kv_port\":\"32988\",\"kv_connector_extra_config\":{\"proxy_ip\":\"127.0.0.1\",\"proxy_port\":\"30001\",\"http_port\":\"40005\",\"local_ping_port\":\"32567\",\"proxy_ping_port\":\"36367\",\"handshake_port\":60020,\"notify_port\":49657}}"      
 

@@ -3,11 +3,12 @@
 # LOG_FILE="logs/vllm_serve_prefill_$(date +'%Y%m%d_%H-%M-%S').log"
 
 set -ex
-export GLOO_SOCKET_IFNAME=ens14np0
-export NCCL_SOCKET_IFNAME=ens14np0
-
-# export CUDA_VISIBLE_DEVICES=6,7
-# export HIP_VISIBLE_DEVICES=6,7
+# export GLOO_SOCKET_IFNAME=ens14np0
+# export NCCL_SOCKET_IFNAME=ens14np0
+export GLOO_SOCKET_IFNAME=eth0
+export NCCL_SOCKET_IFNAME=eth0
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 #export VLLM_LOGGING_CONFIG_PATH=log.conf.json
 #export NCCL_DEBUG=INFO 
 
@@ -27,7 +28,9 @@ export VLLM_ENABLE_DSV3=1
 export SAFETENSORS_FAST_GPU=1   
 export VLLM_TORCH_PROFILER_DIR=/nfs/users/mingzliu/vllm/examples/online_serving/disaggregated_serving_p2p_moriio_xpyd/write_0929
 export CUDA_PROFILE_ACTIVITIES="cuda"
-MODEL_PATH=/nfs/DeepSeekV3tiny
+# MODEL_PATH=/nfs/DeepSeekV3tiny
+# MODEL_PATH=/shared-inference/models_blog/DeepSeek-V3-5layer
+MODEL_PATH=/shared-inference/models_blog/DeepSeek-V3
 # MODEL_PATH=/nfs/DeepSeek-V3
 # /apps/data/models/models--Qwen--Qwen3-0.6B/snapshots/e6de91484c29aa9480d55605af694f39b081c455
 # {
@@ -43,7 +46,7 @@ MODEL_PATH=/nfs/DeepSeekV3tiny
     --enforce-eager \
     --disable-log-request \
     --served-model-name QWEN \
-    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_producer","kv_port":"21001","kv_connector_extra_config":{"proxy_ip":"10.194.132.10","proxy_port":"30001","proxy_ping_port":"36367","local_ping_port":"7777","http_port":"20005","handshake_port":61300,"notify_port":61800}}'
+    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_producer","kv_port":"21001","kv_connector_extra_config":{"proxy_ip":"10.158.215.60","proxy_port":"30001","proxy_ping_port":"36367","local_ping_port":"7777","http_port":"20005","handshake_port":61300,"notify_port":61800}}'
            
            
 #           "--kv-transfer-config={\"kv_connector\":\"MoRIIOConnector\",\"kv_role\":\"kv_producer\",\"kv_port\":\"21001\",\"kv_connector_extra_config\":{\"proxy_ip\":\"127.0.0.1\",\"proxy_port\":\"30001\",\"proxy_ping_port\":\"36367\",\"local_ping_port\":\"7777\",\"http_port\":\"20005\",\"handshake_port\":60000,\"notify_port\":49856}}"        ],
