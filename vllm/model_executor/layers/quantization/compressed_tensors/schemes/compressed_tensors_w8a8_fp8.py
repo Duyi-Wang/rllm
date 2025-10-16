@@ -95,6 +95,7 @@ class CompressedTensorsW8A8Fp8(CompressedTensorsScheme):
             layer.register_parameter("input_scale", input_scale)
 
     def process_weights_after_loading(self, layer) -> None:
+
         if self.strategy == QuantizationStrategy.TENSOR:
             weight, weight_scale, input_scale = (
                 process_fp8_weight_tensor_strategy(
@@ -107,7 +108,8 @@ class CompressedTensorsW8A8Fp8(CompressedTensorsScheme):
                 process_fp8_weight_channel_strategy(
                     layer.weight, layer.weight_scale,
                     getattr(layer, 'input_scale', None)))
-            weight = weight.t()
+            if not self.use_aiter_and_is_supported:
+                weight = weight.t()
 
         elif self.strategy == QuantizationStrategy.BLOCK:
             assert self.is_static_input_scheme is False
@@ -119,7 +121,14 @@ class CompressedTensorsW8A8Fp8(CompressedTensorsScheme):
             raise ValueError(f"Unknown quantization strategy {self.strategy}")
 
         # required by torch.compile to be torch.nn.Parameter
-        layer.weight = Parameter(weight.data, requires_grad=False)
+        if self.use_aiter_and_is_supported:
+            from aiter.ops.shuffle import shuffle_weight
+
+            # keep the weight as (N, K)
+            layer.weight = Parameter(shuffle_weight(weight),
+                                     requires_grad=False)
+        else:
+            layer.weight = Parameter(weight.data, requires_grad=False)
         layer.weight_scale = Parameter(weight_scale.data, requires_grad=False)
         if input_scale is not None:
             layer.input_scale = Parameter(input_scale.data,
