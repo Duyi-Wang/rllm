@@ -71,8 +71,9 @@ class TopKTopPSampler(nn.Module):
         elif current_platform.is_cpu():
             self.forward = self.forward_cpu
         elif (logprobs_mode not in ("processed_logits", "processed_logprobs")
-              and current_platform.is_rocm() and envs.VLLM_ROCM_USE_AITER
-              and envs.VLLM_ROCM_USE_AITER_SAMPLING):
+              and current_platform.is_rocm()
+              and envs.VLLM_ROCM_USE_AITER_SAMPLING
+              and envs.VLLM_ROCM_USE_AITER):
             import aiter.ops.sampling  # noqa: F401
 
             self.aiter_ops = torch.ops.aiter
