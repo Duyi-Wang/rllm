@@ -413,6 +413,50 @@ class Fp8LinearMethod(LinearMethodBase):
                                      input_scale=layer.input_scale,
                                      bias=bias)
 
+from functools import lru_cache
+from vllm.distributed import parallel_state
+import mori
+
+@lru_cache(maxsize=2)
+def mori_op_init(quant_dtype, dtype, rank, world_size, hdim, E, topk, max_num_tokens):
+    world_group = parallel_state.get_world_group().cpu_group
+    print(f'[DEBUG {rank=}] mori_op_init {world_size=}')
+    assert world_group is not None
+    torch._C._distributed_c10d._register_process_group("mori", world_group)
+    mori.shmem.shmem_torch_process_group_init("mori")
+    if world_size <= 8:
+        # single node
+        mori_config = mori.ops.EpDispatchCombineConfig(
+            data_type=quant_dtype,
+            rank=rank,
+            world_size=world_size,
+            hidden_dim=hdim,
+            scale_dim=hdim // 128,
+            scale_type_size=torch.float32.itemsize,
+            max_token_type_size=dtype.itemsize,
+            max_num_inp_token_per_rank=4096,
+            num_experts_per_rank=E // world_size,
+            num_experts_per_token=topk,
+        )
+    else:
+        # multi node
+        mori_config = mori.ops.EpDispatchCombineConfig(
+            data_type=quant_dtype,
+            rank=rank,
+            world_size=world_size,
+            hidden_dim=hdim,
+            scale_dim=hdim // 128,
+            scale_type_size=torch.float32.itemsize,
+            max_token_type_size=dtype.itemsize,
+            max_num_inp_token_per_rank=4096,
+            num_experts_per_rank=E // world_size,
+            num_experts_per_token=topk,
+            warp_num_per_block=16,
+            block_num=64,
+            kernel_type=mori.ops.EpDispatchCombineKernelType.InterNode,
+        )
+    mori_op = mori.ops.EpDispatchCombineOp(mori_config)
+    return mori_op
 
 class Fp8MoEMethod(FusedMoEMethodBase):
     """MoE method for FP8.
@@ -480,6 +524,25 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             logger.warning_once(
                 "CutlassBlockScaledGroupedGemm not supported on the current "
                 "platform.")
+        self.use_mori = (envs.VLLM_ALL2ALL_BACKEND == 'mori')
+        if self.use_mori:
+            self.moe = None
+            self.mori_op = None
+
+
+    def init_mori_config(self, moe):
+        self.moe = moe
+        if self.use_mori:
+            self.mori_op = mori_op_init(
+                torch.float8_e4m3fn,  # FIXME, use some config as input
+                self.moe.in_dtype,
+                self.moe.ep_rank,
+                self.moe.ep_size,
+                self.moe.hidden_dim,
+                self.moe.num_experts,
+                self.moe.experts_per_token,
+                self.moe.max_num_tokens,
+            )
 
     def create_weights(self, layer: Module, num_experts: int, hidden_size: int,
                        intermediate_size_per_partition: int,
@@ -999,6 +1062,24 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         #
         topk_weights, topk_ids, zero_expert_result = select_result
 
+        dtype = x.dtype
+        if self.use_mori:
+            num_token = x.shape[0]
+            scale = None
+            (
+                x,
+                dispatch_weights,
+                dispatch_scale,
+                dispatch_ids,
+                dispatch_recv_token_num,
+            ) = self.mori_op.dispatch(x, topk_weights, scale, topk_ids)
+        else:
+            dispatch_weights = topk_weights
+            dispatch_ids = topk_ids
+            dispatch_scale = layer.w13_input_scale
+            dispatch_recv_token_num = None
+            dtype = None
+
         if self.rocm_aiter_moe_enabled:
             from vllm.model_executor.layers.fused_moe.rocm_aiter_fused_moe import (  # noqa: E501
                 rocm_aiter_fused_experts)
@@ -1007,8 +1088,9 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                 x,
                 layer.w13_weight,
                 layer.w2_weight,
-                topk_weights=topk_weights,
-                topk_ids=topk_ids,
+                topk_weights=dispatch_weights,
+                topk_ids=dispatch_ids,
+                dtype=dtype,
                 activation=activation,
                 apply_router_weight_on_input=apply_router_weight_on_input,
                 expert_map=expert_map,
@@ -1067,12 +1149,14 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             )
         else:
             from vllm.model_executor.layers.fused_moe import fused_experts
+            if dispatch_recv_token_num:
+                x = x[:dispatch_recv_token_num[0]]
             result = fused_experts(
                 hidden_states=x,
                 w1=layer.w13_weight,
                 w2=layer.w2_weight,
-                topk_weights=topk_weights,
-                topk_ids=topk_ids,
+                topk_weights=dispatch_weights,
+                topk_ids=dispatch_ids,
                 inplace=True,
                 activation=activation,
                 global_num_experts=global_num_experts,
@@ -1082,6 +1166,13 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                 allow_deep_gemm=self.allow_deep_gemm,
                 allow_cutlass_block_scaled_grouped_gemm=(
                     self.allow_cutlass_block_scaled_grouped_gemm))
+        if self.use_mori:
+            result = self.mori_op.combine(
+                result,
+                None,
+                topk_ids,
+            )[0][:num_token]
+
         if zero_expert_num != 0 and zero_expert_type is not None:
             assert not isinstance(result, tuple), \
                 "Shared + zero experts are mutually exclusive not yet supported"
