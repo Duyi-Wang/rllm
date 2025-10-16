@@ -111,6 +111,7 @@ if TYPE_CHECKING:
     VLLM_ROCM_USE_TRITON_ROPE: bool = False
     VLLM_ROCM_USE_AITER_FP8BMM: bool = True
     VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS: bool = True
+    VLLM_ROCM_USE_AITER_SAMPLING: bool = True
     VLLM_ROCM_USE_SKINNY_GEMM: bool = True
     VLLM_ROCM_FP8_PADDING: bool = True
     VLLM_ROCM_MOE_PADDING: bool = True
@@ -965,6 +966,13 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # By default is enabled.
     "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS": lambda: (
         os.getenv("VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS", "True").lower()
+        in ("true", "1")
+    ),
+
+    # Whether to use aiter sampling ops.
+    # By default is enabled.
+    "VLLM_ROCM_USE_AITER_SAMPLING": lambda: (
+        os.getenv("VLLM_ROCM_USE_AITER_SAMPLING", "True").lower()
         in ("true", "1")
     ),
 

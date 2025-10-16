@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from functools import cache
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Callable, Optional, Union
 
 import torch
 from packaging import version
@@ -30,19 +30,21 @@ USE_ROWWISE_TORCH_SCALED_MM = (current_platform.is_rocm() and version.parse(
     torch.__version__) >= version.parse("2.7")
                                and current_platform.has_device_capability(94))
 
+
 @cache
 def on_mi3xx() -> bool:
     GPU_ARCH = torch.cuda.get_device_properties("cuda").gcnArchName
     return any(arch in GPU_ARCH for arch in ["gfx942", "gfx950"])
 
+
 @cache
 def use_skinny_gemm() -> bool:
     return envs.VLLM_ROCM_USE_SKINNY_GEMM
 
+
 @cache
 def use_aiter_and_is_supported() -> bool:
-    return (envs.VLLM_ROCM_USE_AITER
-            and envs.VLLM_ROCM_USE_AITER_LINEAR
+    return (envs.VLLM_ROCM_USE_AITER and envs.VLLM_ROCM_USE_AITER_LINEAR
             and current_platform.is_fp8_fnuz())
 
 
@@ -57,13 +59,14 @@ if current_platform.is_rocm():
     def rocm_aiter_per_token_quant_fp8_impl(
         input: torch.Tensor,
         scale: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        return aiter_per_token_quant(input.contiguous(), scale, rocm_aiter.dtypes.fp8)
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return aiter_per_token_quant(input.contiguous(), scale,
+                                     rocm_aiter.dtypes.fp8)
 
     def rocm_aiter_per_token_quant_fp8_fake(
         input: torch.Tensor,
         scale: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         quantized = torch.empty_like(input,
                                      dtype=torch.float8_e4m3fnuz,
                                      device=input.device)
@@ -75,19 +78,20 @@ if current_platform.is_rocm():
     def rocm_aiter_per_tensor_quant_fp8_impl(
         input: torch.Tensor,
         scale: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        return aiter_per_tensor_quant(input.contiguous(), scale, rocm_aiter.dtypes.fp8)
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return aiter_per_tensor_quant(input.contiguous(), scale,
+                                      rocm_aiter.dtypes.fp8)
 
     def rocm_aiter_per_tensor_quant_fp8_fake(
         input: torch.Tensor,
         scale: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         quantized = torch.empty_like(input,
                                      dtype=torch.float8_e4m3fnuz,
                                      device=input.device)
         scale_tensor = torch.empty(1, dtype=torch.float32, device=input.device)
         return quantized, scale_tensor
-        
+
     def rocm_aiter_gemm_a8w8_bpreshuffle_impl(
             input: torch.Tensor,
             weight: torch.Tensor,
@@ -120,7 +124,7 @@ if current_platform.is_rocm():
         if out_dtype is None:
             out_dtype = input.dtype
         return torch.empty((m, n), dtype=out_dtype, device=input.device)
-    
+
     direct_register_custom_op(
         op_name="rocm_aiter_per_token_quant_fp8",
         op_func=rocm_aiter_per_token_quant_fp8_impl,
@@ -152,7 +156,6 @@ def rocm_aiter_per_token_w8a8_scaled_mm(qinput: torch.Tensor,
                                         scale_a: torch.Tensor,
                                         scale_b: torch.Tensor,
                                         bias: torch.Tensor,
-                                        input_2d: torch.Tensor,
                                         output_shape: list) -> torch.Tensor:
     output_shape = [*qinput.shape[:-1], weight.shape[0]]
     output = torch.ops.vllm.rocm_aiter_gemm_a8w8_bpreshuffle(
@@ -160,7 +163,7 @@ def rocm_aiter_per_token_w8a8_scaled_mm(qinput: torch.Tensor,
     if bias is not None:
         output = output + bias
 
-    return torch.narrow(output, 0, 0, input_2d.shape[0]).view(*output_shape)
+    return torch.narrow(output, 0, 0, qinput.shape[0]).view(*output_shape)
 
 
 def rocm_aiter_per_tensor_w8a8_scaled_mm(qinput: torch.Tensor,
@@ -169,7 +172,6 @@ def rocm_aiter_per_tensor_w8a8_scaled_mm(qinput: torch.Tensor,
                                          scale_a: torch.Tensor,
                                          scale_b: torch.Tensor,
                                          bias: torch.Tensor,
-                                         input_2d: torch.Tensor,
                                          output_shape: list) -> torch.Tensor:
 
     output = aiter_ops.rocm_aiter_tuned_gemm(qinput,
@@ -179,8 +181,7 @@ def rocm_aiter_per_tensor_w8a8_scaled_mm(qinput: torch.Tensor,
                                              scale_b=scale_b,
                                              bias=bias)
 
-    return torch.narrow(output, 0, 0, input_2d.shape[0]).view(*output_shape)
-
+    return torch.narrow(output, 0, 0, qinput.shape[0]).view(*output_shape)
 
 
 def sparse_cutlass_supported() -> bool:
