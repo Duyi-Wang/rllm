@@ -157,9 +157,13 @@ def rocm_aiter_per_token_w8a8_scaled_mm(qinput: torch.Tensor,
                                         scale_b: torch.Tensor,
                                         bias: torch.Tensor,
                                         output_shape: list) -> torch.Tensor:
-    output_shape = [*qinput.shape[:-1], weight.shape[0]]
+    output_shape = [*qinput.shape[:-1], weight.shape[-1]]
     output = torch.ops.vllm.rocm_aiter_gemm_a8w8_bpreshuffle(
-        qinput, weight, out_dtype=out_dtype, scale_a=scale_a, scale_b=scale_b)
+        qinput,
+        weight.t(),
+        out_dtype=out_dtype,
+        scale_a=scale_a,
+        scale_b=scale_b)
     if bias is not None:
         output = output + bias
 
@@ -499,6 +503,7 @@ def dispatch_w8a8_scaled_mm(
         return torch_per_token_w8a8_scaled_mm
     # Normally, torch.scaled_mm supports per tensor weights + activations only
     # so fallback to naive if per channel or per token
+
     return torch_channelwise_w8a8_scaled_mm
 
 
