@@ -108,8 +108,8 @@ class CompressedTensorsW8A8Fp8(CompressedTensorsScheme):
                 process_fp8_weight_channel_strategy(
                     layer.weight, layer.weight_scale,
                     getattr(layer, 'input_scale', None)))
-            if not self.use_aiter_and_is_supported:
-                weight = weight.t()
+            # if not self.use_aiter_and_is_supported:
+            weight = weight.t()
 
         elif self.strategy == QuantizationStrategy.BLOCK:
             assert self.is_static_input_scheme is False
