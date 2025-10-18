@@ -1648,7 +1648,8 @@ class MoRIIOConnectorWorker:
 
         if not self.is_producer:
             return 
-
+        if GLOBAL_MORIIO_MODE==MoRIIOMode.READ:
+            return
         # print(f"mama {layer_name} save kv")
         # for
         # pass
