@@ -84,7 +84,9 @@ class MoRIIOMode(Enum):
     WRITE = "write"
 
 # 全局模式变量
-GLOBAL_MORIIO_MODE = MoRIIOMode.WRITE
+# GLOBAL_MORIIO_MODE = MoRIIOMode.WRITE
+GLOBAL_MORIIO_MODE = MoRIIOMode.READ
+
 logger = init_logger(__name__)
 def print_cur_time(strr):
     debug=False
@@ -458,12 +460,10 @@ class MoRIIOConnectorMetadata(KVConnectorMetadata):
             remote_host=kv_transfer_params["remote_host"],
             remote_port=kv_transfer_params["remote_port"],
             remote_handshake_port=kv_transfer_params['remote_handshake_port'],
-            remote_notify_port=kv_transfer_params['remote_notify_port'],
+            remote_notify_port=kv_transfer_params.get('remote_notify_port',None),
             # P workers don't need to receive tp_size from proxy here.
             tp_size=kv_transfer_params.get("tp_size", 1),
         )
-
-
         if write_mode:
             self.reqs_to_save[request_id] = _req
         else:
@@ -623,12 +623,10 @@ class MoRIIOConnectorScheduler:
         if GLOBAL_MORIIO_MODE == MoRIIOMode.WRITE:
             # MoriiO in write mode, no remote prefill
            
-            return len(request.prompt_token_ids)  - num_computed_tokens,True
+            return len(request.prompt_token_ids)   - num_computed_tokens,True
 
-        else: 
-            return len(request.prompt_token_ids)  - num_computed_tokens,False
+        return len(request.prompt_token_ids) -1 - num_computed_tokens,False
 
-        return 0, False
     def send_notify_block(self, req_id: str, int_list: list[int] = None,host=None,port=None):
         
         # def, todo TP>1?
