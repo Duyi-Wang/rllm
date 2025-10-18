@@ -178,22 +178,22 @@ class MoRIIOWrapper():
     def build_session(self):
         return self.moriio_engine.create_session(self.local_memory_metadata, self.remote_memory_metadata)
 
-    def read_remote_data(self,transfer_size_byte,local_offset = 0,remote_offset = 0, sess_idx=0):
+    def read_remote_data(self,transfer_size_byte,local_offset = 0,remote_offset = 0,session=None):
         assert self.remote_memory_metadata is not None,"You have not register remote memory data!"
         assert self.local_memory_registered,"You have not register local memory data!"
    
-        transfer_status = self.sessiones[sess_idx].batch_read(
+        transfer_status = session.batch_read(
              local_offset, 
              remote_offset, 
             transfer_size_byte,
             self.moriio_engine.allocate_transfer_uid())
       
         self.transfer_status.append(transfer_status)
-    def read_remote_data_s(self,transfer_size_byte,local_offset = 0,remote_offset = 0, sess_idx=0):
+    def read_remote_data_s(self,transfer_size_byte,local_offset = 0,remote_offset = 0,session=None):
         assert self.remote_memory_metadata is not None,"You have not register remote memory data!"
         assert self.local_memory_registered,"You have not register local memory data!"
    
-        transfer_status = self.sessiones[sess_idx].read(
+        transfer_status = session.read(
              local_offset, 
              remote_offset, 
             transfer_size_byte,
@@ -1757,8 +1757,10 @@ class MoRIIOConnectorWorker:
         # if GLOBAL_MORIIO_MODE==MoRIIOMode.READ:
         #TODO 现在还是需要发送， 理论上只有read需要
         # torch.distributed.barrier(get_tp_group().device_group)
-        for req_id, _ in metadata.reqs_to_recv.items():    
-            self.moriio_wrapper.send_notify(req_id,_)
+        for req_id, req_meta in metadata.reqs_to_recv.items():  
+            # self.moriio_wrapper.send_notify(request_id,task.remote_ip,task.remote_notify_port+self.tp_rank)
+  
+            self.moriio_wrapper.send_notify(req_id,req_meta.remote_host,req_meta.remote_notify_port+self.tp_rank)
 
     def _read_blocks_for_req(self, req_id: str, meta: ReqMeta):
         logger.debug(
@@ -1894,25 +1896,27 @@ class MoRIIOConnectorWorker:
 
     
         sessiones=self._get_builded_session(dst_engine_id)
-        stride = self.kv_caches[layer_name].stride()
         is_mla = (len(self.kv_cache_shape) == 3)
      
-        if is_mla:
-            blknum, blksize, hs = self.kv_cache_shape
-            hn = 1
-            block_stride = stride[0]
-            ktov_stride = None
-        else:
-            _, blknum, blksize, hn, hs = self.kv_cache_shape
-            ktov_stride = stride[0]
-            block_stride = stride[1]
+     
        
-        sz = self.kv_caches[layer_name].element_size()
-        transfer_size_byte = blksize * hn * hs * sz
+      
         a,b,c=[],[],[]
         for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
             
             if self._is_first_layer(layer_name):
+                stride = self.kv_caches[layer_name].stride()
+                if is_mla:
+                    blknum, blksize, hs = self.kv_cache_shape
+                    hn = 1
+                    block_stride = stride[0]
+                    ktov_stride = None
+                else:
+                    _, blknum, blksize, hn, hs = self.kv_cache_shape
+                    ktov_stride = stride[0]
+                    block_stride = stride[1]
+                sz = self.kv_caches[layer_name].element_size()
+                transfer_size_byte = blksize * hn * hs * sz
                 per_block = 1 if is_mla else 2
                 total = len(local_block_ids) * per_block
                 offset_local = [0] * total
@@ -1930,8 +1934,9 @@ class MoRIIOConnectorWorker:
                         offset_local[w] = sz * (1 * ktov_stride + lb * block_stride)
                         offset_remote[w] = sz * (1 * ktov_stride + rb * block_stride)
                         w += 1
+                    a,b,c = self.merge_contiguous_blocks_fast_v2(offset_local,offset_remote,transfer_sizes,assume_sorted=True)
+
             sess_idx = list(self.layer_name_to_local_kv_cache_metadata.keys()).index(layer_name)
-            a,b,c = self.merge_contiguous_blocks_fast_v2(offset_local,offset_remote,transfer_sizes,assume_sorted=True)
             use_batch=True
             if use_batch:
                 self.moriio_wrapper.read_remote_data(c, a, b, sessiones[sess_idx])
