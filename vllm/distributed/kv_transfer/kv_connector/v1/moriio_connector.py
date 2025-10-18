@@ -1892,126 +1892,53 @@ class MoRIIOConnectorWorker:
         #         return 
         start = time.perf_counter()
 
-        
-   
-        if not self.builded_session:
-            for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
-                # logger.info(f"session map:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
-                stride = self.kv_caches[layer_name].stride()
-                self.moriio_wrapper.set_local_memory_metadata(local_kv_cache_metadata[0])
-                # logger.info(f"mapping {layer_name} local memory {local_kv_cache_metadata[0]}, remote memory {self.layer_name_to_remote_kv_cache_metadata[layer_name][0]}")
-                self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_name][0])
-                self.moriio_wrapper.build_session()
-            self.builded_session=True
-            # print("sleeping")
-            # time.sleep(20)
-       
-
-        # self.kv_caches
-        # contiguous_ids = search_contiguous_block_ids(local_block_ids,remote_block_ids)
-        _,blknum,blksize,hn,hs = self.kv_cache_shape
-        # stride = [blknum*blksize*hn*hs   ,blksize*hs*hn   ,hs*hn   ,hs   ,1]
-        sess_idx=0
-        use_batch=True
-        al=[]
-        bl=[]
-        cl=[]
-        sl=[] #26+27*n
-        for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
-            # self.debug_cache.append((layer_name, (self.kv_caches[layer_name][:,local_block_ids[0],:,:,:].sum())))
-            # if (len(self.debug_cache)-26)%27==0: 
-            # # if (len(self.debug_cache)-62)%63==0:
-
-            #     cccccccc=0
-                
-            if GLOBAL_MORIIO_MODE == MoRIIOMode.WRITE:
-                continue
-            # use read mode to check
-            for idx,local_blkid in enumerate(local_block_ids):
-                assert(local_blkid==remote_block_ids[idx])
-         
-           
-            # logger.error(f"zovlog:--------> {layer_name = },{local_kv_cache_metadata[0] = },{len(local_kv_cache_metadata) = },{self.kv_caches[layer_name].shape = },{self.kv_caches[layer_name].stride() = }")
-            stride = self.kv_caches[layer_name].stride()
-            # self.moriio_wrapper.set_local_memory_metadata(local_kv_cache_metadata[0])
-            # self.moriio_wrapper.set_remote_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[layer_name][0])
-            # 在local_block_ids这个序列中,判断一下那些是连续的
-            # for start,end in zip(contiguous_ids[])
-            #todo make batch_read
-            offset_local=[]
-            offset_remote=[]
-            transfer_sizes=[]
-            sess_id=[]
-            sz=self.kv_caches[layer_name].element_size()
-            transfer_size_byte=blksize * hn * hs * sz
-          
-            for idx,local_blkid in enumerate(local_block_ids):
-                offset_k_local = sz * (0 * stride[0] + local_blkid * stride[1])
-                offset_v_local = sz* (1 * stride[0] + local_blkid * stride[1])
-                offset_k_remote = sz * (0 * stride[0] + remote_block_ids[idx] * stride[1])
-                offset_v_remote = sz * (1 * stride[0] + remote_block_ids[idx] * stride[1])
-                assert(local_blkid==remote_block_ids[idx])
-                # transfer_size_byte = blksize * hn * hs * sz
-                # logger.info(f"zovlog:===========>{self.kv_cache_shape = },{layer_name = },{offset_k = },{offset_v = },{transfer_size_byte = },{blkid = },{stride = }")
-                
-                
-                offset_local.append(offset_v_local)
-                offset_remote.append(offset_v_remote)
-                transfer_sizes.append(transfer_size_byte)
-
-            
-                offset_local.append(offset_k_local)
-                offset_remote.append(offset_k_remote)
-                transfer_sizes.append(transfer_size_byte)
-        
-
-                if not use_batch:
-                    pass
-                
-                #[1,2], [2,5].
-                     # self.moriio_wrapper.read_remote_data_s(transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
-                    # self.moriio_wrapper.read_remote_data_s(transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
-                    print("!!!!",transfer_size_byte,offset_k_local,offset_k_remote,sess_idx)
-                    print("!!!!",transfer_size_byte,offset_v_local,offset_v_remote,sess_idx)
-            a,b,c=self.merge_contiguous_blocks(offset_local,offset_remote,transfer_sizes)
-            return 
-            if use_batch:
-                # self.moriio_wrapper.read_remote_data(transfer_sizes,offset_local, offset_remote,sess_idx)
-                
-                # print(f"!!!!len(buffer){len(c)}")
-                # for ii in range(len(c)):
-                #     print(c[ii]/1024)
-                pass
-                # self.moriio_wrapper.read_remote_data(c,a, b,sess_idx)
-
-            else:
-                for rang_idx in range(len(a)):
-                    # print("bbbb",c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
-                    self.moriio_wrapper.read_remote_data_s(c[rang_idx],a[rang_idx],b[rang_idx],sess_idx)
-            al.append(a)
-            bl.append(b)
-            cl.append(c)
-            sl.append(sess_idx)
-            sess_idx+=1
-        
-        
-        self.moriio_wrapper.waiting_for_read_complete()
-        # time.sleep(15)
-
-        # 结束计时
-        end = time.perf_counter()
-
-        # 计算耗时
-        print(f"耗时：{end - start:.4f} 秒")
-
-        for inb in range(len(al)):
-            self.moriio_wrapper.read_remote_data(cl[inb],al[inb],bl[inb],sl[inb])
-        self.moriio_wrapper.waiting_for_read_complete()
-        end2=time.perf_counter()
-
-        print(f"纯传输耗时：{end2 - end:.4f} 秒")
-
     
+        sessiones=self._get_builded_session(dst_engine_id)
+        stride = self.kv_caches[layer_name].stride()
+        is_mla = (len(self.kv_cache_shape) == 3)
+     
+        if is_mla:
+            blknum, blksize, hs = self.kv_cache_shape
+            hn = 1
+            block_stride = stride[0]
+            ktov_stride = None
+        else:
+            _, blknum, blksize, hn, hs = self.kv_cache_shape
+            ktov_stride = stride[0]
+            block_stride = stride[1]
+       
+        sz = self.kv_caches[layer_name].element_size()
+        transfer_size_byte = blksize * hn * hs * sz
+        a,b,c=[],[],[]
+        for layer_name,local_kv_cache_metadata in self.layer_name_to_local_kv_cache_metadata.items():
+            
+            if self._is_first_layer(layer_name):
+                per_block = 1 if is_mla else 2
+                total = len(local_block_ids) * per_block
+                offset_local = [0] * total
+                offset_remote = [0] * total
+                transfer_sizes = [transfer_size_byte] * total
+                w = 0
+                for i, lb in enumerate(local_block_ids):
+                    rb = remote_block_ids[i]
+                    # K
+                    offset_local[w] = sz * (lb * block_stride)
+                    offset_remote[w] = sz * (rb * block_stride)
+                    w += 1
+                    if not is_mla:
+                        # V
+                        offset_local[w] = sz * (1 * ktov_stride + lb * block_stride)
+                        offset_remote[w] = sz * (1 * ktov_stride + rb * block_stride)
+                        w += 1
+            sess_idx = list(self.layer_name_to_local_kv_cache_metadata.keys()).index(layer_name)
+            a,b,c = self.merge_contiguous_blocks_fast_v2(offset_local,offset_remote,transfer_sizes,assume_sorted=True)
+            use_batch=True
+            if use_batch:
+                self.moriio_wrapper.read_remote_data(c, a, b, sessiones[sess_idx])
+            else:
+                for i in range(len(a)):
+                    self.moriio_wrapper.read_remote_data([c[i]], [a[i]], [b[i]], sessiones[sess_idx])
+            self.moriio_wrapper.waiting_for_read_complete()
 
 
 @contextlib.contextmanager
