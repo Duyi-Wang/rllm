@@ -207,6 +207,7 @@ if TYPE_CHECKING:
     VLLM_USE_NCCL_SYMM_MEM: bool = False
     VLLM_NCCL_INCLUDE_PATH: Optional[str] = None
     VLLM_USE_FBGEMM: bool = False
+    VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT: bool = False
 
 
 def get_default_cache_root():
@@ -1491,6 +1492,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
     lambda: os.environ.get("VLLM_NCCL_INCLUDE_PATH", None),
     # Flag to enable FBGemm kernels on model execution
     "VLLM_USE_FBGEMM": lambda: bool(int(os.getenv("VLLM_USE_FBGEMM", "0"))),
+    
+    "VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT":
+    lambda: bool(int(os.getenv("VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT", "0"))),
 }
 
 # --8<-- [end:env-vars-definition]
