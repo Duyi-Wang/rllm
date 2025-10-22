@@ -492,6 +492,8 @@ def dispatch_w8a8_scaled_mm(
         return cutlass_w8a8_scaled_mm
 
     # If torch.scaled_mm supports per-channel (weights) per-token (inputs)
+    # TODO(fix): per_tensor_activations from False to True
+    per_tensor_activations = False
     if not per_tensor_weights and not per_tensor_activations \
             and USE_ROWWISE_TORCH_SCALED_MM:
         if use_aiter_and_is_supported():
