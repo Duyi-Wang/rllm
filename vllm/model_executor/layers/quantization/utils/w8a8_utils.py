@@ -492,8 +492,6 @@ def dispatch_w8a8_scaled_mm(
         return cutlass_w8a8_scaled_mm
 
     # If torch.scaled_mm supports per-channel (weights) per-token (inputs)
-    # TODO(fix): per_tensor_activations from False to True
-    per_tensor_activations = False
     if not per_tensor_weights and not per_tensor_activations \
             and USE_ROWWISE_TORCH_SCALED_MM:
         if use_aiter_and_is_supported():
@@ -580,6 +578,9 @@ class Fp8LinearOp:
 
         per_tensor_weights = (weight_scale.numel() == 1)
         per_tensor_activations = (x_scale.numel() == 1)
+        # When decoding with batch size 1, input will be considered asper-tensor quantized in per-token case
+        if not per_tensor_weights and per_tensor_activations and input_2d.shape[0] == 1:
+            per_tensor_activations = False
 
         # TODO(luka) do this dispatch during init (after ScaledMM refactor)
         w8a8_scaled_mm_func = dispatch_w8a8_scaled_mm(self.preferred_backend,
