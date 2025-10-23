@@ -44,6 +44,7 @@ export UCX_TLS=rc,rocm
  vllm serve $MODEL_PATH   \
     -tp 8 \
     --block-size 1 \
+    --no-enable-prefix-caching \
     --max-num-batched-tokens 8192 \
     --max-model-len 8192 \
     --max-num-seqs 2048 \

@@ -42,6 +42,7 @@ export UCX_TLS=rc,rocm
     -tp 8 \
     --block-size 1 \
     --max-num-batched-tokens 8192 \
+    --no-enable-prefix-caching \
     --max-model-len 8192 \
     --max-num-seqs 2048 \
     --trust-remote-code \

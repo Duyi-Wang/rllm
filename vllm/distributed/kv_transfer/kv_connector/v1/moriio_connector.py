@@ -84,8 +84,8 @@ class MoRIIOMode(Enum):
     WRITE = "write"
 
 # 全局模式变量
-# GLOBAL_MORIIO_MODE = MoRIIOMode.WRITE
-GLOBAL_MORIIO_MODE = MoRIIOMode.READ
+GLOBAL_MORIIO_MODE = MoRIIOMode.WRITE
+# GLOBAL_MORIIO_MODE = MoRIIOMode.READ
 
 logger = init_logger(__name__)
 def print_cur_time(strr):

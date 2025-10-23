@@ -38,6 +38,7 @@ MODEL_PATH=/shared-inference/models_blog/DeepSeek-V3
     -tp 8 \
     --block-size 1 \
     --max-num-batched-tokens 8192 \
+    --no-enable-prefix-caching \
     --max-model-len 8192 \
     --max-num-seqs 2048 \
     --trust-remote-code \
@@ -46,7 +47,7 @@ MODEL_PATH=/shared-inference/models_blog/DeepSeek-V3
     --enforce-eager \
     --disable-log-request \
     --served-model-name QWEN \
-    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_producer","kv_port":"21001","kv_connector_extra_config":{"proxy_ip":"10.158.215.60","proxy_port":"30001","proxy_ping_port":"36367","local_ping_port":"7777","http_port":"20005","handshake_port":61300,"notify_port":61800}}'
+    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_producer","kv_port":"21001","kv_connector_extra_config":{"proxy_ip":"10.224.2.178","proxy_port":"30001","proxy_ping_port":"36367","local_ping_port":"7777","http_port":"20005","handshake_port":61300,"notify_port":61800}}'
            
            
 #           "--kv-transfer-config={\"kv_connector\":\"MoRIIOConnector\",\"kv_role\":\"kv_producer\",\"kv_port\":\"21001\",\"kv_connector_extra_config\":{\"proxy_ip\":\"127.0.0.1\",\"proxy_port\":\"30001\",\"proxy_ping_port\":\"36367\",\"local_ping_port\":\"7777\",\"http_port\":\"20005\",\"handshake_port\":60000,\"notify_port\":49856}}"        ],
