@@ -256,117 +256,112 @@ class MoRIIOWrapper():
         for n in range(len(self.kv_caches)):
             hash_list.append(self.get_hash(n,local_block_ids))
         return hash_list
-    def async_wait_reqid(self,kv_caches=None):
-
+    def async_wait_reqid(self, kv_caches=None):
+        """异步等待请求ID，处理远程块分配和完成通知"""
         if kv_caches is not None:
             self.kv_caches = kv_caches
-        assert self.notify_port is not None,"remote engine port is not None!"
+        
+        assert self.notify_port is not None, "Notify port cannot be None"
+        
         if self.notify_thread is not None:
             return
+        
         def _async_wait():
+            """后台线程处理消息接收"""
             host = "*"
             path = make_zmq_path("tcp", host, self.notify_port)
-            logger.info(f" node starting to listen notify from ..path = {path}")
+            logger.info(f"Node starting to listen notify from path = {path}")
+            
             with zmq_ctx(zmq.ROUTER, path) as sock:
                 while True:
-                    identity, msg = sock.recv_multipart()
-                    
                     try:
-                        # 尝试反序列化为结构化数据
-                        data = msgpack.loads(msg)
-                        
-                        if isinstance(data, dict) and "req_id" in data:
-                            req_id = data["req_id"]
-                            int_list = data.get("int_list", [])
-                            msg_type = data.get("type", "unknown")
-                            
-                            print_cur_time(f"!!!zovlog:P received remote block msg: req_id={req_id}, type={msg_type}")
-                            #TODO  更好的处理方法， 不然新旧request这里容易冲突
-                            # torch.distributed.barrier(get_tp_group().device_group)
-                            # 处理结构化消息 #TODO 修复初始化的问题
-                            # if GLOBAL_ROLE == ROLE.PRODUCER:
-                            with self.lock:
-                                # 可以同时存储req_id和int_list
-                                #TODO 删除这个
-                                self.done_remote_allocate_req.append(req_id)
-                                self.done_remote_allocate_req_dict[req_id] = RemoteAllocInfo(int_list)
-                            # else:
-                            #     assert False,"Only P node should receive this type of message!"
-                                
-                    except (msgpack.exceptions.ExtraData, msgpack.exceptions.UnpackException):
-                    
-                        
-                        msg = msg.decode("UTF-8")
-                        if  msg.startswith("cmpl"):
-                                # assert 0,"P instance received error req id data"
-                            with self.lock:  
-                                if GLOBAL_ROLE==ROLE.PRODUCER:
-                                    # torch.distributed.barrier(get_tp_group().device_group)
-
-                                    # P节点执行   
-                                    #可以释放page
-
-                                        logger.info(f"zovlog:P received red id {msg} for release")
-                                        self.done_req_ids.append(msg)
-                                # D节点执行
-                                else:
-                                # elif GLOBAL_ROLE==ROLE.CONSUMER:
-                                        # torch.distributed.barrier(get_tp_group().device_group)
-                                        print_cur_time(f"!!!zovlog:D received write cache complete req id {msg}")
-                                        self.done_write_cache_req_ids.append(msg)
-                                        
-                                        # logger.info(f"{self.debug_id=} {str(self.get_all_hash(self.debug_id))}")
-                                        self.debug_id+=1
-                                    # time.sleep(5)
-                    
-                   
-        self.notify_thread = threading.Thread(target=_async_wait,daemon=True)
+                        identity, msg = sock.recv_multipart()
+                        self._handle_message(msg)
+                    except Exception as e:
+                        logger.error(f"Error processing message: {e}")
+                        continue
+    
+        self.notify_thread = threading.Thread(target=_async_wait, daemon=True, name="moriio-notify-listener")
         self.notify_thread.start()
+
+    def _handle_message(self, msg: bytes):
+        """处理接收到的消息"""
+        try:
+            # 尝试解析结构化数据
+            data = msgpack.loads(msg)
+            if isinstance(data, dict) and "req_id" in data:
+                self._handle_structured_message(data)
+                return
+        except (msgpack.exceptions.ExtraData, msgpack.exceptions.UnpackException):
+            pass
         
-    
-    
- 
-    
-    
+        # 处理字符串消息
+        try:
+            msg_str = msg.decode("UTF-8")
+            if msg_str.startswith("cmpl"):
+                self._handle_completion_message(msg_str)
+        except UnicodeDecodeError:
+            logger.warning(f"Received non-UTF8 message: {msg}")
+
+    def _handle_structured_message(self, data: dict):
+        """处理结构化消息（远程块分配）"""
+        req_id = data["req_id"]
+        int_list = data.get("int_list", [])
+        msg_type = data.get("type", "unknown")
+        
+        print_cur_time(f"!!!zovlog:P received remote block msg: req_id={req_id}, type={msg_type}")
+        
+        with self.lock:
+            self.done_remote_allocate_req.append(req_id)
+            self.done_remote_allocate_req_dict[req_id] = RemoteAllocInfo(int_list)
+
+    def _handle_completion_message(self, msg: str):
+        """处理完成消息"""
+        with self.lock:
+            if GLOBAL_ROLE == ROLE.PRODUCER:
+                logger.info(f"zovlog:P received req id {msg} for release")
+                self.done_req_ids.append(msg)
+            else:
+                print_cur_time(f"!!!zovlog:D received write cache complete req id {msg}")
+                self.done_write_cache_req_ids.append(msg)
+                self.debug_id += 1
+      
     # 使用msgpack序列化
-  
-    def send_notify(self,req_ids,remote_ip=None,remote_port=None):
-        # logger.info(f"zovlog: enter sending notify to P...req_ids = {req_ids}")
-        # if self.tp_rank!=0:
-        #     pass
-        # return 
-        #TODO this should be assert 
+    def send_notify(self, req_ids, remote_ip=None, remote_port=None):
+        """发送通知消息到远程节点"""
+        if not remote_ip or not remote_port:
+            logger.warning("Missing remote_ip or remote_port for notification")
+            return
         
         path = make_zmq_path("tcp", remote_ip, str(remote_port))
-        #TODO:     make once     
+        
+        # 延迟创建socket，只有在需要时才创建
         if path not in self.paths:
             ctx = zmq.Context()
-            sock = make_zmq_socket(ctx=ctx,
-                            path=path,
-                            socket_type=zmq.DEALER,
-                            bind=False)
-            self.paths[path]=sock
-            
-        # if self.remote_engine_ip is  None:
-        #     self.remote_engine_ip=meta.remote_host
-        # assert self.notify_port is not None,"remote engine port is not None!"
+            sock = make_zmq_socket(
+                ctx=ctx,
+                path=path,
+                socket_type=zmq.DEALER,
+                bind=False
+            )
+            self.paths[path] = sock
         
-        if not isinstance(req_ids,list):
-            req_ids_ = [req_ids]
-        else:
-            req_ids_ = req_ids
-        host = self.remote_engine_ip
-        #just for debug
-        # path2 = make_zmq_path("tcp", host, self.notify_port)
-        # assert path==path2,f"notify port not match! {path} != {path2}"
-        #TODO make on
-        sock=self.paths[path]
-            # with zmq_ctx(zmq.DEALER, path) as sock:
-        for req in req_ids_:
-            assert isinstance(req,str)
-            # print(f"zovlog: sending notify to P...req_ids_ = {req_ids_},path = {path}")
-            sock.send(req.encode("utf-8"))
-            # print(f"zovlog: sending notify to P finished")
+        # 标准化请求ID为列表
+        req_list = req_ids if isinstance(req_ids, list) else [req_ids]
+        
+        # 批量发送消息
+        sock = self.paths[path]
+        try:
+            for req_id in req_list:
+                if not isinstance(req_id, str):
+                    logger.warning(f"Invalid req_id type: {type(req_id)}, expected str")
+                    continue
+                sock.send(req_id.encode("utf-8"))
+        except Exception as e:
+            logger.error(f"Failed to send notification to {path}: {e}")
+            # 可选：从缓存中移除失败的socket
+            self.paths.pop(path, None)
+            raise
     
     def pop_finished_req_ids(self):
         # P 节点调用
