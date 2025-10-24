@@ -20,7 +20,7 @@ import msgspec
 import torch
 import zmq
 import msgpack
-import socket
+import os
 import pickle
 import numpy as np
 from typing import List, Tuple
@@ -83,9 +83,16 @@ class MoRIIOMode(Enum):
     READ = "read"
     WRITE = "write"
 
-# 全局模式变量
-GLOBAL_MORIIO_MODE = MoRIIOMode.WRITE
-# GLOBAL_MORIIO_MODE = MoRIIOMode.READ
+def get_moriio_mode() -> MoRIIOMode:
+    read_mode = os.environ.get('MORIIO_CONNECTOR_READ_MODE', 'false').lower()
+    if read_mode in ('true', '1', 'yes', 'on'):
+        return MoRIIOMode.READ
+    else:
+        return MoRIIOMode.WRITE
+
+GLOBAL_MORIIO_MODE = get_moriio_mode()
+
+
 
 logger = init_logger(__name__)
 def print_cur_time(strr):
@@ -167,19 +174,19 @@ class MoRIIOWrapper():
         self.local_memory_registered = True
         return local_memory_metadata_packed
     
-    def set_remote_memory_metadata(self,packed_memory_metadata):
-        self.remote_memory_metadata = MemoryDesc.unpack(packed_memory_metadata)
+    def get_unpack_memory_metadata(self,packed_memory_metadata):
+        return MemoryDesc.unpack(packed_memory_metadata)
     
-    def set_local_memory_metadata(self,packed_memory_metadata):
-        self.local_memory= packed_memory_metadata
-        self.local_memory_metadata = MemoryDesc.unpack(packed_memory_metadata)
+    # def set_local_memory_metadata(self,packed_memory_metadata):
+    #     self.local_memory= packed_memory_metadata
+    #     self.local_memory_metadata = MemoryDesc.unpack(packed_memory_metadata)
     
     
-    def build_session(self):
-        return self.moriio_engine.create_session(self.local_memory_metadata, self.remote_memory_metadata)
+    def build_session(self,local_memory_metadata,remote_memory_metadata):
+        return self.moriio_engine.create_session(local_memory_metadata, remote_memory_metadata)
 
     def read_remote_data(self,transfer_size_byte,local_offset = 0,remote_offset = 0,session=None):
-        assert self.remote_memory_metadata is not None,"You have not register remote memory data!"
+        # assert self.remote_memory_metadata is not None,"You have not register remote memory data!"
         assert self.local_memory_registered,"You have not register local memory data!"
    
         transfer_status = session.batch_read(
@@ -190,7 +197,7 @@ class MoRIIOWrapper():
       
         self.transfer_status.append(transfer_status)
     def read_remote_data_s(self,transfer_size_byte,local_offset = 0,remote_offset = 0,session=None):
-        assert self.remote_memory_metadata is not None,"You have not register remote memory data!"
+        # assert self.remote_memory_metadata is not None,"You have not register remote memory data!"
         assert self.local_memory_registered,"You have not register local memory data!"
    
         transfer_status = session.read(
@@ -201,7 +208,7 @@ class MoRIIOWrapper():
       
         self.transfer_status.append(transfer_status)
     def write_remote_data(self,transfer_size_byte,local_offset = 0,remote_offset = 0, session=None):
-        assert self.remote_memory_metadata is not None,"You have not register remote memory data!"
+        # assert self.remote_memory_metadata is not None,"You have not register remote memory data!"
         assert self.local_memory_registered,"You have not register local memory data!"
         write_uid=self.moriio_engine.allocate_transfer_uid()
 
@@ -214,7 +221,7 @@ class MoRIIOWrapper():
         with self.lock:
             self.transfer_status.append(transfer_status)
     def write_remote_data_s(self,transfer_size_byte,local_offset = 0,remote_offset = 0, sess_idx=0):
-        assert self.remote_memory_metadata is not None,"You have not register remote memory data!"
+        # assert self.remote_memory_metadata is not None,"You have not register remote memory data!"
         assert self.local_memory_registered,"You have not register local memory data!"
    
         transfer_status = self.sessiones[sess_idx].write(
@@ -1120,10 +1127,13 @@ class MoRIIOConnectorWorker:
         if remote_engine_id not in self.builded_write_session:
             cur_remote_engine_sessiones=[]
             for ln, local_meta in self.layer_name_to_local_kv_cache_metadata.items():
-                self.moriio_wrapper.set_local_memory_metadata(local_meta[0])
-                self.moriio_wrapper.set_remote_memory_metadata(
-                self.layer_name_to_remote_kv_cache_metadata[remote_engine_id][ln][0])
-                cur_remote_engine_sessiones.append(self.moriio_wrapper.build_session())
+                # self.moriio_wrapper.set_local_memory_metadata(local_meta[0])
+                # self.moriio_wrapper.set_remote_memory_metadata(
+                # self.layer_name_to_remote_kv_cache_metadata[remote_engine_id][ln][0])
+                
+                unpcaked_local_memory_meta = self.moriio_wrapper.get_unpack_memory_metadata(local_meta[0])
+                unpcaked_remote_memory_meta = self.moriio_wrapper.get_unpack_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[remote_engine_id][ln][0])
+                cur_remote_engine_sessiones.append(self.moriio_wrapper.build_session(unpcaked_local_memory_meta,unpcaked_remote_memory_meta))
             self.builded_write_session[remote_engine_id]=cur_remote_engine_sessiones
         return self.builded_write_session[remote_engine_id]
             # self.builded_write_session = True
