@@ -186,7 +186,6 @@ class MoRIIOWrapper():
         return self.moriio_engine.create_session(local_memory_metadata, remote_memory_metadata)
 
     def read_remote_data(self,transfer_size_byte,local_offset = 0,remote_offset = 0,session=None):
-        # assert self.remote_memory_metadata is not None,"You have not register remote memory data!"
         assert self.local_memory_registered,"You have not register local memory data!"
    
         transfer_status = session.batch_read(
@@ -197,7 +196,6 @@ class MoRIIOWrapper():
       
         self.transfer_status.append(transfer_status)
     def read_remote_data_s(self,transfer_size_byte,local_offset = 0,remote_offset = 0,session=None):
-        # assert self.remote_memory_metadata is not None,"You have not register remote memory data!"
         assert self.local_memory_registered,"You have not register local memory data!"
    
         transfer_status = session.read(
@@ -208,7 +206,6 @@ class MoRIIOWrapper():
       
         self.transfer_status.append(transfer_status)
     def write_remote_data(self,transfer_size_byte,local_offset = 0,remote_offset = 0, session=None):
-        # assert self.remote_memory_metadata is not None,"You have not register remote memory data!"
         assert self.local_memory_registered,"You have not register local memory data!"
         write_uid=self.moriio_engine.allocate_transfer_uid()
 
@@ -221,7 +218,6 @@ class MoRIIOWrapper():
         with self.lock:
             self.transfer_status.append(transfer_status)
     def write_remote_data_s(self,transfer_size_byte,local_offset = 0,remote_offset = 0, sess_idx=0):
-        # assert self.remote_memory_metadata is not None,"You have not register remote memory data!"
         assert self.local_memory_registered,"You have not register local memory data!"
    
         transfer_status = self.sessiones[sess_idx].write(
@@ -234,7 +230,6 @@ class MoRIIOWrapper():
 
 
     def waiting_for_read_complete(self):
-        """等待所有传输完成的优化版本"""
         if not self.transfer_status:
             return
         
@@ -247,15 +242,9 @@ class MoRIIOWrapper():
         # 并发等待（如果MoRIIO支持）
         for status in transfers_to_wait:
             try:
-                st=time.perf_counter()
                 status.Wait()
-                if status.Succeeded():
-                    pass
-                else:
-                    logger.info(f"!!ggggg {status.Message()}")
-                    logger.info(f"!!ggggg {status.Code()}")
-
-                en=time.perf_counter()
+                if not status.Succeeded():
+                    logger.warning(f"Transfer failed: {status.Message()}, Code: {status.Code()}")
             except Exception as e:
                 logger.error(f"Transfer {status} failed: {e}")
                 raise
@@ -330,10 +319,7 @@ class MoRIIOWrapper():
                                         self.debug_id+=1
                                     # time.sleep(5)
                     
-                    
-                    # else:
-                    #     assert 0,"GLOBAL_ROLE is not set correctly!"
-                    # TODO 没init前就send了？
+                   
         self.notify_thread = threading.Thread(target=_async_wait,daemon=True)
         self.notify_thread.start()
         
