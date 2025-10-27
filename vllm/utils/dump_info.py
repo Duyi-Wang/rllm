@@ -18,5 +18,6 @@ def dump_info_op(desc:str, input:torch.Tensor):
     return torch.ops.vllm.dump_info(desc, input)
 
 def dump_info_print():
+    print("=========Dumped Info=========")
     for desc, tensor in dump_infos.items():
         print(f"{desc} : {tensor}")
