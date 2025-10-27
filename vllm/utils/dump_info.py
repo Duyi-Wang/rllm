@@ -10,7 +10,6 @@ def dump_info_fake(desc:str, input:torch.Tensor) -> None:
 
 direct_register_custom_op(op_name="dump_info",
                             op_func=dump_info_impl,
-                            mutates_args=["o"],
                             fake_impl=dump_info_fake,
                             tags=())
 
