@@ -783,7 +783,6 @@ class MoRIIOConnectorWorker:
 
         # Config.
         self.vllm_config = vllm_config
-        self.block_size = vllm_config.cache_config.block_size
         self.kv_transfer_config = vllm_config.kv_transfer_config
         self.is_producer = self.kv_transfer_config.is_kv_producer
 
@@ -958,7 +957,6 @@ class MoRIIOConnectorWorker:
         # Protects _handshake_futures and _remote_agents.
         self._handshake_lock = threading.RLock()
 
-        self.vllm_config = vllm_config
         self.block_size = vllm_config.cache_config.block_size
         self.model_config = vllm_config.model_config
         self.cache_config = vllm_config.cache_config
@@ -1029,10 +1027,7 @@ class MoRIIOConnectorWorker:
         self._write_task_q.put(task)
 
     def _remote_blocks_ready(self, task: WriteTask) -> bool:
-        rid = task.request_id
-        if rid in self.moriio_wrapper.done_remote_allocate_req:
-            return True
-        return False
+        return task.request_id in self.moriio_wrapper.done_remote_allocate_req_dict
 
     def _write_worker_loop(self):
         SLEEP_MIN = 0.001
@@ -1166,33 +1161,55 @@ class MoRIIOConnectorWorker:
                     task.remote_notify_port + self.tp_rank)
 
     def _ping(self, zmq_context):
+        PING_INTERVAL = 10
+        MAX_RETRIES = 30
+        
+        http_request_address = f"http://{self.request_address}/v1/completions"
+        role = "P" if self.is_producer else "D"
+        
+        retry_count = 0
         index = 1
-        sock = zmq_context.socket(zmq.DEALER)
-        sock.connect(f"tcp://{self.proxy_ip}:{self.proxy_ping_port}")
-        while True:
-            try:
-                http_request_address = "http://" + self.request_address + "/v1/completions"
-                data = {
-                    "type": "register",
-                    "role": "P" if self.is_producer else "D",
-                    "index": str(index),
-                    "request_address": http_request_address,
-                    "handshake_port": self.handshake_port,
-                    "notify_port": self.notify_port
-                }
+        
+        with zmq_context.socket(zmq.DEALER) as sock:
+            sock.connect(f"tcp://{self.proxy_ip}:{self.proxy_ping_port}")
+            
+            while True:
+                try:
+                    data = {
+                        "type": "register",
+                        "role": role,
+                        "index": str(index),
+                        "request_address": http_request_address,
+                        "handshake_port": self.handshake_port,
+                        "notify_port": self.notify_port
+                    }
 
-                sock.send(msgpack.dumps(data))
-            except ConnectionRefusedError:
-                logger.info(
-                    f"====> {(self.local_ip,self.local_ping_port)},'->',{(self.proxy_ip, self.proxy_ping_port)} send failed,connection refused"
-                )
-            except OSError as e:
-                logger.info(f"===> send failed , os error {e}")
-            except Exception as e:
-                logger.info(f"===> send failed , unknown error {e}")
-            finally:
-                time.sleep(10)
-                index += 1
+                    sock.send(msgpack.dumps(data))
+                    # logger.debug(f"Successfully sent ping message #{index}")
+                    retry_count = 0 
+                    
+                except ConnectionRefusedError:
+                    logger.warning(
+                        f"Connection refused: {self.local_ip}:{self.local_ping_port} -> "
+                        f"{self.proxy_ip}:{self.proxy_ping_port}"
+                    )
+                    retry_count += 1
+                    
+                except OSError as e:
+                    logger.error(f"OS error when sending ping: {e}")
+                    retry_count += 1
+                    
+                except Exception as e:
+                    logger.error(f"Unexpected error when sending ping: {e}")
+                    retry_count += 1
+                    
+                finally:
+                    if retry_count >= MAX_RETRIES:
+                        logger.error(f"Max retries ({MAX_RETRIES}) exceeded. Stopping ping loop.")
+                        break
+                        
+                    time.sleep(PING_INTERVAL)
+                    index += 1
 
     def handle_proxy_request(self):
         if self.is_producer:
