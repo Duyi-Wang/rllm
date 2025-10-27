@@ -290,7 +290,6 @@ class MoRIIOWrapper():
                 self.debug_id += 1
       
     def send_notify(self, req_ids, remote_ip=None, remote_port=None):
-        """发送通知消息到远程节点"""
         if not remote_ip or not remote_port:
             logger.warning("Missing remote_ip or remote_port for notification")
             return
@@ -478,12 +477,10 @@ class MoRIIOConnector(KVConnectorBase_V1):
         if GLOBAL_MORIIO_MODE==MoRIIOMode.WRITE:
             if GLOBAL_ROLE==ROLE.CONSUMER:
                 self.connector_worker.moriio_wrapper.async_wait_reqid()
-        st = time.perf_counter()
         assert self.connector_worker is not None
         assert isinstance(self._connector_metadata, MoRIIOConnectorMetadata)
         self.connector_worker.start_load_kv(self._connector_metadata)
-        en = time.perf_counter()
-        # print(f"start_load_kv总时间{en - st} sec")
+    
 
     def wait_for_layer_load(self, layer_name: str) -> None:
         """NixlConnector does not do layerwise saving."""
@@ -559,7 +556,6 @@ class MoRIIOConnectorScheduler:
         if self.is_producer:
             return 0,False
         
-        # logger.info(f"zovlog:==============> call get_num_new_matched_tokens,{request.kv_transfer_params = }")
         params = request.kv_transfer_params
 
         if GLOBAL_MORIIO_MODE == MoRIIOMode.WRITE:
@@ -594,7 +590,6 @@ class MoRIIOConnectorScheduler:
             "type": "remote_blocks"
         }
         serialized_data = msgpack.dumps(data)
-        # logger.info(f"zovlog: sending block slots with data to P...req_id = {req_id}, , path = {path}")
         self.paths[path].send(serialized_data)
     def update_state_after_alloc(self, request: "Request", # 包含remote使用到的blockid
                                  blocks: "KVCacheBlocks", # local 分配好的blockid
@@ -996,18 +991,10 @@ class MoRIIOConnectorWorker:
         """主线程调用：只入队，不阻塞。"""
         self._ensure_write_worker()
         # stream = torch.cuda.current_stream(kv_layer.device)
-        
-        
+  
         stream=torch.cuda.current_stream()
         event = torch.cuda.Event()
         event.record(stream)
-        # event.synchronize()
-        
-        
-        
-        # torch.cuda.synchronize()
-        
-
 
         task = WriteTask(
             request_id=request_id,
@@ -1060,10 +1047,7 @@ class MoRIIOConnectorWorker:
         if remote_engine_id not in self.builded_write_session:
             cur_remote_engine_sessiones=[]
             for ln, local_meta in self.layer_name_to_local_kv_cache_metadata.items():
-                # self.moriio_wrapper.set_local_memory_metadata(local_meta[0])
-                # self.moriio_wrapper.set_remote_memory_metadata(
-                # self.layer_name_to_remote_kv_cache_metadata[remote_engine_id][ln][0])
-                
+
                 unpcaked_local_memory_meta = self.moriio_wrapper.get_unpack_memory_metadata(local_meta[0])
                 unpcaked_remote_memory_meta = self.moriio_wrapper.get_unpack_memory_metadata(self.layer_name_to_remote_kv_cache_metadata[remote_engine_id][ln][0])
                 cur_remote_engine_sessiones.append(self.moriio_wrapper.build_session(unpcaked_local_memory_meta,unpcaked_remote_memory_meta))
