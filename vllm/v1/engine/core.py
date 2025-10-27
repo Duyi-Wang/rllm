@@ -349,6 +349,7 @@ class EngineCore:
 
         engine_core_outputs = self.scheduler.update_from_output(
             scheduler_output, model_output)
+        dump_info_print()
 
         return engine_core_outputs, model_executed
 
