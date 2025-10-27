@@ -501,14 +501,14 @@ class MoRIIOConnectorScheduler:
         self.vllm_config = vllm_config
         self.block_size = vllm_config.cache_config.block_size
         self.engine_id: EngineId = engine_id
-        self.side_channel_host = envs.VLLM_NIXL_SIDE_CHANNEL_HOST
+        self.side_channel_host = envs.VLLM_MORIIO_SIDE_CHANNEL_HOST
         self.side_channel_port = (
-            self.vllm_config.kv_transfer_config.kv_connector_extra_config['handshake_port'], # envs.VLLM_NIXL_SIDE_CHANNEL_PORT +
+            self.vllm_config.kv_transfer_config.kv_connector_extra_config['handshake_port'], # envs.VLLM_MORIIO_SIDE_CHANNEL_PORT +
             self.vllm_config.parallel_config.data_parallel_rank *
             self.vllm_config.parallel_config.tensor_parallel_size)
         logger.info(f"zovlog::==========> Initializing MoRIIO Scheduler {engine_id = },{self.side_channel_port = }")
         
-        self.side_notify_port = self.vllm_config.kv_transfer_config.kv_connector_extra_config['notify_port'] # envs.VLLM_NIXL_SIDE_CHANNEL_PORT +
+        self.side_notify_port = self.vllm_config.kv_transfer_config.kv_connector_extra_config['notify_port'] # envs.VLLM_MORIIO_SIDE_CHANNEL_PORT +
         self.tp_size=self.vllm_config.parallel_config.tensor_parallel_size
          
         self.is_producer = vllm_config.kv_transfer_config.kv_role == "kv_producer"
@@ -713,7 +713,7 @@ class MoRIIOConnectorScheduler:
         if delay_free_blocks:
             # Prefill request on remote. It will be read from D upon completion
             self._reqs_need_send[request.request_id] = time.perf_counter(
-            ) + envs.VLLM_NIXL_ABORT_REQUEST_TIMEOUT
+            ) + envs.VLLM_MORIIO_ABORT_REQUEST_TIMEOUT
             
         return delay_free_blocks, dict(
             do_remote_prefill=True,
@@ -801,15 +801,12 @@ class MoRIIOConnectorWorker:
             self._ping_thread.start() # join?
 
         logger.info(f"Initializing MoRIIO Engine ,engine = {self.moriio_engine},role = {'producer' if self.is_producer else 'consumer'}")
-        logger.info(f"zovlog:=====>{self.local_ip = },{self._rank = },{self._local_rank = },{self.local_kv_port = },{self.proxy_ip = },{self.proxy_port = },{self.local_ping_port = },{self.proxy_ping_port = }")
+        logger.debug(f"{self.local_ip = },{self._rank = },{self._local_rank = },{self.local_kv_port = },{self.proxy_ip = },{self.proxy_port = },{self.local_ping_port = },{self.proxy_ping_port = }")
         # Agent.
         self.moriio_wrapper = MoRIIOWrapper()
-        logger.info(f"{self._rank = }:set_moriio_engine")
         self.moriio_wrapper.set_moriio_engine(self.moriio_engine)
-        logger.info(f"{self._rank = }:set_moriio_engine end")
         
         self.moriio_wrapper.set_backend_type(BackendType.RDMA)
-        logger.info(f"{self._rank = }:set_moriio_backend end")
 
         self.moriio_wrapper.notify_port = self.notify_port
         self.local_kv_cache_metadata = []
@@ -838,7 +835,7 @@ class MoRIIOConnectorWorker:
         # base port (which is sent in the KVTransferParams).
         # Each TP rank listens/queries on the base_port + tp_rank.
         # self.side_channel_port: int = (
-        #     envs.VLLM_NIXL_SIDE_CHANNEL_PORT +
+        #     envs.VLLM_MORIIO_SIDE_CHANNEL_PORT +
         #     vllm_config.parallel_config.data_parallel_rank *
         #     vllm_config.parallel_config.tensor_parallel_size)
         self.side_channel_port: int = (
@@ -853,7 +850,7 @@ class MoRIIOConnectorWorker:
         self.world_size = get_tensor_model_parallel_world_size()
         self.tp_group = get_tp_group()
 
-        # KV Caches and nixl tracking data.
+        # KV Caches and moriio tracking data.
         self.kv_caches: dict[str, torch.Tensor] = {}
 
         # Map of engine_id -> kv_caches_base_addr. For TP case, each local
@@ -865,9 +862,9 @@ class MoRIIOConnectorWorker:
         self.num_regions = 0
         self.num_layers = 0
 
-        # nixl_prepped_dlist_handle.
+        # moriio_prepped_dlist_handle.
         self.src_xfer_side_handle: int = 0
-        # Map of engine_id -> nixl_prepped_dlist_handle (int)].
+        # Map of engine_id -> moriio_prepped_dlist_handle (int)].
         self.dst_xfer_side_handles: dict[EngineId, int] = {}
 
         # Map of engine_id -> num_blocks. All ranks in the same deployment will
@@ -887,7 +884,7 @@ class MoRIIOConnectorWorker:
         self._handshake_initiation_executor = ThreadPoolExecutor(
             # MoRIIO is not guaranteed to be thread-safe, limit 1 worker.
             max_workers=1,
-            thread_name_prefix="vllm-nixl-handshake-initiator")
+            thread_name_prefix="vllm-moriio-handshake-initiator")
         self._ready_requests = queue.Queue[tuple[ReqId, ReqMeta]]()
         self._handshake_futures: dict[EngineId, Future[dict[int, str]]] = {}
         # Protects _handshake_futures and _remote_agents.
@@ -954,7 +951,6 @@ class MoRIIOConnectorWorker:
                             remote_notify_port:int,
                             remote_ip:str
                             ):
-        """主线程调用：只入队，不阻塞。"""
         self._ensure_write_worker()
   
         stream=torch.cuda.current_stream()
@@ -979,7 +975,6 @@ class MoRIIOConnectorWorker:
             return True
         return False
     def _write_worker_loop(self):
-        """后台线程：轮询 + 条件等待 + 处理 / 延迟重试。"""
         SLEEP_MIN = 0.001
         REQUEUE_DELAY = 0.01
         while True:
@@ -1014,7 +1009,6 @@ class MoRIIOConnectorWorker:
             self.builded_write_session[remote_engine_id]=cur_remote_engine_sessiones
         return self.builded_write_session[remote_engine_id]
     def _execute_write_task(self, task: WriteTask):
-        """原 _write_blocks 主体（去掉 while 等待部分），只做真正传输。"""
         request_id = task.request_id
         local_block_ids = task.local_block_ids
        
@@ -1142,7 +1136,7 @@ class MoRIIOConnectorWorker:
                      str(size_in_bytes))
 
         # Listen for new requests for metadata.
-        host = "*" # envs.VLLM_NIXL_SIDE_CHANNEL_HOST
+        host = "*" # envs.VLLM_MORIIO_SIDE_CHANNEL_HOST
         path = make_zmq_path("tcp", host, base_port + tp_rank)
         logger.info(f"zovlog:======> Starting listening on path: {path}")
         with zmq_ctx(zmq.ROUTER, path) as sock:
@@ -1183,7 +1177,6 @@ class MoRIIOConnectorWorker:
 
         # Handshake only with the remote TP rank that current local rank will
         # pull from. With homogeneous TP it happens to be the same rank_i.
-        # logger.info(f"zovlog:--------------------> call _moriio_handshake {self.engine_id = },{self._tp_size = },{remote_tp_size = },{self.tp_rank = },{host = },{port = },")
         
         tp_ratio = self._tp_size[self.engine_id] // remote_tp_size # _tp_size根据engine id 查询这个engine 的tp大小
         tp_ratio=1 
@@ -1220,10 +1213,10 @@ class MoRIIOConnectorWorker:
             remote_agent_name = self.moriio_wrapper.register_remote_engine(metadata.agent_metadata)
             remote_agent_name = self.add_remote_agent(metadata, p_remote_rank,remote_tp_size)
             if len(self.local_kv_cache_metadata) > 0:
-                logger.warning(f"zovlog:=======> {len(self.local_kv_cache_metadata) = },maybe you didnt clear this buffer correctly")
+                logger.warning(f"{len(self.local_kv_cache_metadata) = },maybe you didnt clear this buffer correctly")
                 self.local_kv_cache_metadata = []
             if len(self.remote_kv_cache_metadata) > 0:
-                logger.warning(f"zovlog:=======> {len(self.remote_kv_cache_metadata) = },maybe you didnt clear this buffer correctly")
+                logger.warning(f" {len(self.remote_kv_cache_metadata) = },maybe you didnt clear this buffer correctly")
                 self.remote_kv_cache_metadata = []
 
             received_frame = sock.recv_multipart()
@@ -1275,8 +1268,7 @@ class MoRIIOConnectorWorker:
         fut.add_done_callback(request_ready)
 
     def register_kv_caches(self, kv_caches: dict[str, torch.Tensor]):
-        """Register the KV Cache data in nixl."""
-        """只会在llmengine初始化的时候调用一次,注册所有已经分配的kvcache pool"""
+        """Register the KV Cache data in moriio."""
         for _,t in kv_caches.items():
             t = t.zero_() # for debug,not necessary
         # kv_caches,KEY layer name,VALUE cache tensor,(2,numblocks,blocksize,headnum,headsize)
@@ -1408,11 +1400,11 @@ class MoRIIOConnectorWorker:
 
 
     def add_remote_agent(self,
-                         nixl_agent_meta: MoRIIOAgentMetadata,
+                         moriio_agent_meta: MoRIIOAgentMetadata,
                          remote_tp_rank: int = 0,
                          remote_tp_size: int = 1) -> str:
      
-        engine_id = nixl_agent_meta.engine_id
+        engine_id = moriio_agent_meta.engine_id
         # TODO re-evaluate refreshing for scaling/recovery
         if remote_tp_rank in self._remote_agents.get(engine_id, {}):
             return self._remote_agents[engine_id][remote_tp_rank]
@@ -1423,7 +1415,7 @@ class MoRIIOConnectorWorker:
             assert self._tp_size[engine_id] == remote_tp_size
         # We may eventually enable this after asserting equality in cache
         # layout and close outputs.
-        assert nixl_agent_meta.attn_backend_name == self.backend_name
+        assert moriio_agent_meta.attn_backend_name == self.backend_name
 
         remote_agent_name = "test"
 
@@ -1462,10 +1454,6 @@ class MoRIIOConnectorWorker:
 
         
     def _pop_done_transfers(self, done_req_ids) -> set[str]:
-        """
-        传输完之后,需要发送传输回执至P节点,
-        """
-        # done_req_ids: set[str] = set()
 
         return done_req_ids
     
@@ -1479,7 +1467,6 @@ class MoRIIOConnectorWorker:
             return
      
         for req_id, meta in metadata.reqs_to_save.items():
-            # logger.info(f"log:======> enter save kv for loop,{meta.remote_host = },{meta.remote_port = },{meta.local_block_ids = },{meta.remote_block_ids = },{meta.remote_engine_id = }")
             remote_engine_id = meta.remote_engine_id
             remote_engine_id = str(meta.remote_host) +":"+ str(meta.remote_handshake_port)
             meta.remote_engine_id=remote_engine_id
@@ -1491,7 +1478,7 @@ class MoRIIOConnectorWorker:
                 # Initiate handshake with remote engine to exchange metadata.
                 with self._handshake_lock:
                     if remote_engine_id not in self._remote_agents:
-                        logger.info(f"*****background nixl {remote_engine_id = }")
+                        logger.info(f"*****background moriio {remote_engine_id = }")
                         self._background_moriio_handshake(req_id, remote_engine_id, meta   )
                       
                         
@@ -1512,7 +1499,7 @@ class MoRIIOConnectorWorker:
     
     def start_load_kv(self, metadata: MoRIIOConnectorMetadata):
         """
-        Start loading by triggering non-blocking nixl_xfer.
+        Start loading by triggering non-blocking moriio_xfer.
         We check for these trnxs to complete in each step().
         """
         # print("start load kv")
