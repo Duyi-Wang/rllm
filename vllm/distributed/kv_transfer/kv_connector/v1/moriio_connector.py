@@ -52,14 +52,14 @@ ReqId = str
 GET_META_MSG = b"get_meta_msg"
 POP_DONE_RECV = b"pop_done_recv"
 OVER = b"OVER"
-from enum import Enum  # 添加这行
+from enum import Enum  
 
 @dataclass
 class WriteTask:
     request_id: str
     dst_engine_id: str
     local_block_ids: list[int]
-    remote_block_ids_hint: list[int] | None   # 可能为 None, 等待分配
+    remote_block_ids_hint: list[int] | None   
     layer_name: str
     event: torch.cuda.Event
     remote_notify_port: int
@@ -91,19 +91,8 @@ def get_moriio_mode() -> MoRIIOMode:
         return MoRIIOMode.WRITE
 
 GLOBAL_MORIIO_MODE = get_moriio_mode()
-
-
-
 logger = init_logger(__name__)
-def print_cur_time(strr):
-    debug=False
-    if not debug:
-        return
-    from datetime import datetime
 
-    now = datetime.now()
-    logger.info("!!!"+strr+str(now.strftime("%H:%M:%S.%f")[:-2]))
-# Lazy import nixl_wrapper to avoid loading nixl_bindings if nixl is not used
 try:
     import mori
     from mori.io import (
@@ -142,7 +131,6 @@ class MoRIIOWrapper():
         self.sessiones=[]
         self.has_register_remote_engine = False  #no use
         self.kv_caches = None
-        self.debug_id=1
         self.paths={}
         
 
@@ -176,11 +164,6 @@ class MoRIIOWrapper():
     
     def get_unpack_memory_metadata(self,packed_memory_metadata):
         return MemoryDesc.unpack(packed_memory_metadata)
-    
-    # def set_local_memory_metadata(self,packed_memory_metadata):
-    #     self.local_memory= packed_memory_metadata
-    #     self.local_memory_metadata = MemoryDesc.unpack(packed_memory_metadata)
-    
     
     def build_session(self,local_memory_metadata,remote_memory_metadata):
         return self.moriio_engine.create_session(local_memory_metadata, remote_memory_metadata)
@@ -308,9 +291,7 @@ class MoRIIOWrapper():
         req_id = data["req_id"]
         int_list = data.get("int_list", [])
         msg_type = data.get("type", "unknown")
-        
-        print_cur_time(f"!!!zovlog:P received remote block msg: req_id={req_id}, type={msg_type}")
-        
+                
         with self.lock:
             self.done_remote_allocate_req.append(req_id)
             self.done_remote_allocate_req_dict[req_id] = RemoteAllocInfo(int_list)
@@ -322,7 +303,6 @@ class MoRIIOWrapper():
                 logger.info(f"zovlog:P received req id {msg} for release")
                 self.done_req_ids.append(msg)
             else:
-                print_cur_time(f"!!!zovlog:D received write cache complete req id {msg}")
                 self.done_write_cache_req_ids.append(msg)
                 self.debug_id += 1
       
@@ -697,12 +677,10 @@ class MoRIIOConnectorScheduler:
                 # send block ids
                 #TODO , decode allocate wich times?
                 # send_no
-                print_cur_time("!!!send_notify_block called!")
                 for tp_index in range(self.tp_size):
                     cur_port=request.kv_transfer_params['remote_notify_port']+tp_index
                     # cur_port=self.side_notify_port+tp_index
                     self.send_notify_block(req_id=request.request_id,int_list=blocks.get_block_ids()[0],host=params.get("remote_host"),port=cur_port)
-                print_cur_time("!!!send_notify_block call finished!")
 
                 # assert num_external_tokens == 0f
             # Only trigger 1 KV transfer per request.
@@ -1610,7 +1588,6 @@ class MoRIIOConnectorWorker:
             done_sending, done_recving = set(), self.moriio_wrapper.pop_finished_write_req_ids()
         if len(done_recving)!=0:
             p=0
-            # print_cur_time("finish"+str(self.finished_int)+"   ")
         # torch.distributed.barrier()
         self.finished_int+=1
         return done_sending, done_recving
