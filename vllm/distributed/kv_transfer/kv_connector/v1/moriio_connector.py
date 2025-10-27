@@ -283,7 +283,7 @@ class MoRIIOWrapper():
     def _handle_completion_message(self, msg: str):
         with self.lock:
             if GLOBAL_ROLE == ROLE.PRODUCER:
-                logger.info(f"zovlog:P received req id {msg} for release")
+                # logger.debug(f"P received req id {msg} for release")
                 self.done_req_ids.append(msg)
             else:
                 self.done_write_cache_req_ids.append(msg)
@@ -501,14 +501,14 @@ class MoRIIOConnectorScheduler:
         self.vllm_config = vllm_config
         self.block_size = vllm_config.cache_config.block_size
         self.engine_id: EngineId = engine_id
-        self.side_channel_host = envs.VLLM_MORIIO_SIDE_CHANNEL_HOST
+        self.side_channel_host = envs.VLLM_NIXL_SIDE_CHANNEL_HOST
         self.side_channel_port = (
-            self.vllm_config.kv_transfer_config.kv_connector_extra_config['handshake_port'], # envs.VLLM_MORIIO_SIDE_CHANNEL_PORT +
+            self.vllm_config.kv_transfer_config.kv_connector_extra_config['handshake_port'], # envs.VLLM_NIXL_SIDE_CHANNEL_PORT +
             self.vllm_config.parallel_config.data_parallel_rank *
             self.vllm_config.parallel_config.tensor_parallel_size)
-        logger.info(f"zovlog::==========> Initializing MoRIIO Scheduler {engine_id = },{self.side_channel_port = }")
+        logger.info(f"==========> Initializing MoRIIO Scheduler {engine_id = },{self.side_channel_port = }")
         
-        self.side_notify_port = self.vllm_config.kv_transfer_config.kv_connector_extra_config['notify_port'] # envs.VLLM_MORIIO_SIDE_CHANNEL_PORT +
+        self.side_notify_port = self.vllm_config.kv_transfer_config.kv_connector_extra_config['notify_port'] # envs.VLLM_NIXL_SIDE_CHANNEL_PORT +
         self.tp_size=self.vllm_config.parallel_config.tensor_parallel_size
          
         self.is_producer = vllm_config.kv_transfer_config.kv_role == "kv_producer"
@@ -835,7 +835,7 @@ class MoRIIOConnectorWorker:
         # base port (which is sent in the KVTransferParams).
         # Each TP rank listens/queries on the base_port + tp_rank.
         # self.side_channel_port: int = (
-        #     envs.VLLM_MORIIO_SIDE_CHANNEL_PORT +
+        #     envs.VLLM_NIXL_SIDE_CHANNEL_PORT +
         #     vllm_config.parallel_config.data_parallel_rank *
         #     vllm_config.parallel_config.tensor_parallel_size)
         self.side_channel_port: int = (
@@ -1095,11 +1095,11 @@ class MoRIIOConnectorWorker:
                 
                 sock.send(msgpack.dumps(data))
             except ConnectionRefusedError:
-                logger.info(f"zovlog:====> {(self.local_ip,self.local_ping_port)},'->',{(self.proxy_ip, self.proxy_ping_port)} send failed,connection refused")
+                logger.info(f"====> {(self.local_ip,self.local_ping_port)},'->',{(self.proxy_ip, self.proxy_ping_port)} send failed,connection refused")
             except OSError as e:
-                logger.info(f"zovlog:===> send failed , os error {e}")
+                logger.info(f"===> send failed , os error {e}")
             except Exception as e:
-                logger.info(f"zovlog:===> send failed , unknown error {e}")
+                logger.info(f"===> send failed , unknown error {e}")
             finally:
                 time.sleep(10)
                 index += 1
@@ -1109,7 +1109,7 @@ class MoRIIOConnectorWorker:
             raise NotImplementedError("prefill instance doesn't need to send kv cache in pull mode")
         while True:
             socks = dict(self.poller.poll())
-            logger.info(f"zovlog:====> handle_proxy_request: {socks = },{self.router_socket = }")
+            logger.info(f"====> handle_proxy_request: {socks = }")
             if self.metadata_socket not in socks:
                 continue
             else:
@@ -1136,9 +1136,9 @@ class MoRIIOConnectorWorker:
                      str(size_in_bytes))
 
         # Listen for new requests for metadata.
-        host = "*" # envs.VLLM_MORIIO_SIDE_CHANNEL_HOST
+        host = "*" 
         path = make_zmq_path("tcp", host, base_port + tp_rank)
-        logger.info(f"zovlog:======> Starting listening on path: {path}")
+        logger.info(f"======> Starting listening on path: {path}")
         with zmq_ctx(zmq.ROUTER, path) as sock:
             ready_event.set()
             while True:
@@ -1152,7 +1152,6 @@ class MoRIIOConnectorWorker:
                     # now we send tensor meta data for each block
                     buf = pickle.dumps(layer_name_to_local_kv_cache_metadata)
                     sock.send_multipart((identity, b"", buf))
-                    # logger.info(f"zovlog:=====> P all sent.............. {layer_name_to_local_kv_cache_metadata = }")
                 elif msg == POP_DONE_RECV:
                     _, req_id = sock.recv_multipart()
                     
@@ -1330,12 +1329,11 @@ class MoRIIOConnectorWorker:
         # to better exploit the memory layout (ie num_blocks is the first dim).
         kv_cache_key_list = kv_caches.keys()
         kv_cache_shape_list = [c.shape for c in kv_caches.values()]
-        # logger.info(f"zovlog:======> {kv_cache_key_list = },{kv_cache_shape_list = }")
         for cache_or_caches in kv_caches.values():
       
             
             cache_list = [cache_or_caches] if use_mla or self._use_flashinfer else cache_or_caches
-            # logger.info(f"zovlog:=============> prepare register local kv cache tensor for local mori io engine,{len(cache_list) = },{kv_caches.keys() = }")
+            # logger.debug(f"prepare register local kv cache tensor for local mori io engine,{len(cache_list) = },{kv_caches.keys() = }")
             for cache in cache_list:
                 
                 base_addr = cache.data_ptr()
