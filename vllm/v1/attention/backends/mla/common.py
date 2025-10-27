@@ -1755,8 +1755,15 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
                 decode_q = get_dcp_group().all_gather(decode_q, dim=1)
 
             # call decode attn
+            if fp8_attention:
+                torch.ops.vllm.dump_info("Decode decode_ql_nope:", decode_q[0])
+                torch.ops.vllm.dump_info("Decode decode_q_pe:", decode_q[1])
+            else:
+                torch.ops.vllm.dump_info("Decode decode_q:", decode_q)
+            torch.ops.vllm.dump_info("Decode kv_cache:", kv_cache)
             attn_out, lse = self._forward_decode(decode_q, kv_cache,
                                                  attn_metadata, layer)
+            torch.ops.vllm.dump_info("Decode attn_out:", attn_out)
 
             # recorect dcp attn_out with lse.
             if self.dcp_world_size > 1:
