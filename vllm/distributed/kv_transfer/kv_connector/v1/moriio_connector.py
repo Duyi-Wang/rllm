@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 from dataclasses import field
 from queue import Empty, Queue
 
-Transfer = tuple[int, float]  # (xfer_handle, start_time)
+Transfer = tuple[int, float]  
 EngineId = str
 ReqId = str
 GET_META_MSG = b"get_meta_msg"
@@ -303,7 +303,6 @@ class MoRIIOWrapper:
                 self.done_req_ids.append(msg)
             else:
                 self.done_write_cache_req_ids.append(msg)
-                self.debug_id += 1
 
     def send_notify(self, req_ids, remote_ip=None, remote_port=None):
         if not remote_ip or not remote_port:
@@ -590,7 +589,6 @@ class MoRIIOConnectorScheduler:
                           port=None):
 
         path = make_zmq_path("tcp", host, port)
-        #TODO:     make once
         if path not in self.paths:
             ctx = zmq.Context()
             sock = make_zmq_socket(ctx=ctx,
@@ -856,7 +854,7 @@ class MoRIIOConnectorWorker:
             self._ping_thread = threading.Thread(target=self._ping,
                                                  args=(self.zmq_context, ),
                                                  daemon=True)
-            self._ping_thread.start()  # join?
+            self._ping_thread.start()
 
         logger.info(
             f"Initializing MoRIIO Engine ,engine = {self.moriio_engine},role = {'producer' if self.is_producer else 'consumer'}"
@@ -1266,7 +1264,7 @@ class MoRIIOConnectorWorker:
 
         tp_ratio = self._tp_size[
             self.
-            engine_id] // remote_tp_size  # _tp_size根据engine id 查询这个engine 的tp大小
+            engine_id] // remote_tp_size
         tp_ratio = 1
         p_remote_rank = self.tp_rank // tp_ratio
         path = make_zmq_path("tcp", host, port + p_remote_rank)
