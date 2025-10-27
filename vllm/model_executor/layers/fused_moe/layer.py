@@ -1232,6 +1232,13 @@ class FusedMoE(CustomOp):
                     dtype=moe.in_dtype,
                     device=torch.cuda.current_device())
 
+        # if self.use_ep and envs.VLLM_ALL2ALL_BACKEND == "mori":
+        if self.use_mori_kernels:
+            from vllm.model_executor.layers.quantization.fp8 import (
+                Fp8MoEMethod)
+            assert isinstance(self.quant_method, Fp8MoEMethod)
+            self.quant_method.init_mori_config(moe)
+
     @property
     def shared_experts(self) -> Optional[torch.nn.Module]:
         return None
@@ -1275,6 +1282,10 @@ class FusedMoE(CustomOp):
     @property
     def use_deepep_ll_kernels(self):
         return self.moe_parallel_config.use_deepep_ll_kernels
+
+    @property
+    def use_mori_kernels(self):
+        return self.moe_parallel_config.use_mori_kernels
 
     @property
     def use_flashinfer_cutlass_kernels(self):
@@ -1921,7 +1932,7 @@ class FusedMoE(CustomOp):
         early.
         """
         return (self.use_pplx_kernels or self.use_deepep_ht_kernels
-                or self.use_deepep_ll_kernels)
+                or self.use_deepep_ll_kernels or self.use_mori_kernels)
 
     def maybe_all_reduce_tensor_model_parallel(
             self, final_hidden_states: torch.Tensor):
@@ -1929,7 +1940,7 @@ class FusedMoE(CustomOp):
         The pplx combine kernel reduces across GPU ranks by default.
         """
         if (self.use_pplx_kernels or self.use_deepep_ht_kernels
-                or self.use_deepep_ll_kernels):
+                or self.use_deepep_ll_kernels or self.use_mori_kernels):
             return final_hidden_states
         else:
             return tensor_model_parallel_all_reduce(final_hidden_states)
@@ -2131,6 +2142,7 @@ class FusedMoE(CustomOp):
 
         do_naive_dispatch_combine: bool = (
             self.dp_size > 1
+            and not self.moe_config.use_mori_kernels
             and not self.moe_parallel_config.use_deepep_ht_kernels
             and not self.moe_config.use_flashinfer_cutlass_kernels)
 
