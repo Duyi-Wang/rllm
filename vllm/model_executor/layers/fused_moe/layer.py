@@ -1232,6 +1232,18 @@ class FusedMoE(CustomOp):
                     dtype=moe.in_dtype,
                     device=torch.cuda.current_device())
 
+        # if self.use_ep and envs.VLLM_ALL2ALL_BACKEND == "mori":
+        if self.use_mori_kernels:
+            from vllm.model_executor.layers.quantization.fp8 import (
+                Fp8MoEMethod)
+            from vllm.model_executor.layers.quantization.compressed_tensors.compressed_tensors_moe import (
+                CompressedTensorsW8A8Fp8MoEMethod
+            )
+            assert not envs.VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS
+            assert isinstance(self.quant_method, (Fp8MoEMethod, CompressedTensorsW8A8Fp8MoEMethod))
+            self.quant_method.use_mori = True
+            self.quant_method.init_mori_config(moe)
+
     @property
     def shared_experts(self) -> Optional[torch.nn.Module]:
         return None
@@ -1275,6 +1287,10 @@ class FusedMoE(CustomOp):
     @property
     def use_deepep_ll_kernels(self):
         return self.moe_parallel_config.use_deepep_ll_kernels
+
+    @property
+    def use_mori_kernels(self):
+        return self.moe_parallel_config.use_mori_kernels
 
     @property
     def use_flashinfer_cutlass_kernels(self):
@@ -1877,6 +1893,7 @@ class FusedMoE(CustomOp):
             if indices_type is not None:
                 topk_ids = topk_ids.to(dtype=indices_type)
 
+        import os
         if enable_eplb:
             assert expert_load_view is not None
             assert logical_to_physical_map is not None
@@ -1889,6 +1906,11 @@ class FusedMoE(CustomOp):
                 logical_replica_count=logical_replica_count,
                 indices_type=indices_type,
             )
+        elif os.getenv('VLLM_ENFORCE_EPLB', '0') != '0':
+            temp = torch.randint(0, 256, size=topk_ids.shape,  device=topk_ids.device, dtype=torch.int32)
+            #temp = torch.randperm(topk_ids.shape[0] * topk_ids.shape[1], device=topk_ids.device, dtype=torch.int32) % 256
+            temp = temp.view(-1 , 8)
+            topk_ids = temp.contiguous()
 
         assert topk_ids.dtype == indices_type or indices_type is None
 
@@ -1921,7 +1943,7 @@ class FusedMoE(CustomOp):
         early.
         """
         return (self.use_pplx_kernels or self.use_deepep_ht_kernels
-                or self.use_deepep_ll_kernels)
+                or self.use_deepep_ll_kernels or self.use_mori_kernels)
 
     def maybe_all_reduce_tensor_model_parallel(
             self, final_hidden_states: torch.Tensor):
@@ -1929,7 +1951,7 @@ class FusedMoE(CustomOp):
         The pplx combine kernel reduces across GPU ranks by default.
         """
         if (self.use_pplx_kernels or self.use_deepep_ht_kernels
-                or self.use_deepep_ll_kernels):
+                or self.use_deepep_ll_kernels or self.use_mori_kernels):
             return final_hidden_states
         else:
             return tensor_model_parallel_all_reduce(final_hidden_states)
@@ -2131,6 +2153,7 @@ class FusedMoE(CustomOp):
 
         do_naive_dispatch_combine: bool = (
             self.dp_size > 1
+            and not self.moe_config.use_mori_kernels
             and not self.moe_parallel_config.use_deepep_ht_kernels
             and not self.moe_config.use_flashinfer_cutlass_kernels)
 

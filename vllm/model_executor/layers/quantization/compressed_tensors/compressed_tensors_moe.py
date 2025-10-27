@@ -548,6 +548,26 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
             quant_config._is_fp8_w8a8_sm90(self.weight_quant, self.input_quant)
             or self.is_fp8_w8a8_sm100)
         self.disable_expert_map = False
+        self.use_mori = False
+
+    def init_mori_config(self, moe):
+        self.moe = moe
+        if self.use_mori:
+            assert self.rocm_aiter_moe_enabled
+            from vllm.model_executor.layers.quantization.fp8 import mori_op_init, _mori_available
+            self.mori_op = mori_op_init(
+                torch.float8_e4m3fn,  # FIXME, use some config as input
+                self.moe.in_dtype,
+                self.moe.ep_rank,
+                self.moe.ep_size,
+                self.moe.hidden_dim,
+                self.moe.num_experts,
+                self.moe.experts_per_token,
+                self.moe.max_num_tokens,
+                scale_dim=1,
+            )
+            if self.mori_op is None:
+                raise RuntimeError(f"mori_op_init failed. MORI available: {_mori_available}")
 
     def create_weights(self, layer: torch.nn.Module, num_experts: int,
                        hidden_size: int, intermediate_size_per_partition: int,
@@ -986,17 +1006,47 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
             assert per_act_token == per_channel_quant
             assert self.moe_quant_config is not None
             assert self.fused_experts is None
-            return rocm_aiter_fused_experts(
+            if self.use_mori:
+                num_token = x.shape[0]
+                dtype = x.dtype
+                from aiter import QuantType, get_hip_quant
+                quant_func = get_hip_quant(QuantType.per_Token)
+                x, scale = quant_func(x, quant_dtype=torch.float8_e4m3fnuz)
+                (
+                    x,
+                    dispatch_weights,
+                    dispatch_scale,
+                    dispatch_ids,
+                    dispatch_recv_token_num,
+                ) = self.mori_op.dispatch(x, topk_weights, scale, topk_ids)
+            else:
+                dispatch_weights = topk_weights
+                dispatch_scale = None
+                dispatch_ids = topk_ids
+                dispatch_recv_token_num = None
+                dtype = None
+            result = rocm_aiter_fused_experts(
                 hidden_states=x,
                 w1=layer.w13_weight,
                 w2=layer.w2_weight,
-                topk_weights=topk_weights,
-                topk_ids=topk_ids,
+                topk_weights=dispatch_weights,
+                topk_ids=dispatch_ids,
                 activation=activation,
                 apply_router_weight_on_input=apply_router_weight_on_input,
                 expert_map=expert_map,
                 quant_config=self.moe_quant_config,
+                num_local_tokens=dispatch_recv_token_num,
+                dtype=dtype,
+                a1_scale=dispatch_scale,
             )
+            if self.use_mori:
+                result = self.mori_op.combine(
+                    result,
+                    None,
+                    topk_ids,
+                )[0][:num_token]
+
+            return result
 
         elif self.fused_experts is not None:
             return self.fused_experts(
