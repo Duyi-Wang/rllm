@@ -85,7 +85,6 @@ class KVConnectorModelRunnerMixin:
     def maybe_get_kv_connector_output(
         scheduler_output: "SchedulerOutput"
     ) -> AbstractContextManager[Optional[KVConnectorOutput]]:
-        # logger.info(f"zovlog:============> maybe_get_kv_connector_output,{has_kv_transfer_group() = }")
         return KVConnectorModelRunnerMixin._get_kv_connector_output(
             scheduler_output) if has_kv_transfer_group() else nullcontext()
 
@@ -103,7 +102,6 @@ class KVConnectorModelRunnerMixin:
         kv_connector = get_kv_transfer_group()
         assert isinstance(kv_connector, KVConnectorBase)
         assert scheduler_output.kv_connector_metadata is not None
-        # logger.info(f"zovlog:=======> bind_connector_metadata {scheduler_output = }") # 到这里都是正常的
         kv_connector.bind_connector_metadata(
             scheduler_output.kv_connector_metadata)
 
@@ -111,8 +109,6 @@ class KVConnectorModelRunnerMixin:
         # These transfers are designed to be async and the requests
         # involved may be disjoint from the running requests.
         # Do this here to save a collective_rpc.
-        # logger.info(f"zovlog:=====>kv connector start load kv,{output=}")
-        
         kv_connector.start_load_kv(get_forward_context())
         try:
             yield output

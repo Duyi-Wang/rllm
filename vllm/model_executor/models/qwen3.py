@@ -176,7 +176,7 @@ class Qwen3DecoderLayer(nn.Module):
         dual_chunk_attention_config = getattr(config,
                                               "dual_chunk_attention_config",
                                               None)
-        self.prefix_for_print = prefix
+
         # By default, Qwen3 uses causal attention as it is a decoder-only model.
         # You can override the HF config with `is_causal=False` to enable
         # bidirectional attention, which is used in some embedding models
@@ -236,13 +236,6 @@ class Qwen3DecoderLayer(nn.Module):
         hidden_states, residual = self.post_attention_layernorm(
             hidden_states, residual)
         hidden_states = self.mlp(hidden_states)
-        def print_cur_time(strr):
-            from datetime import datetime
-
-            now = datetime.now()
-            logger.info(strr+str(now.strftime("%H:%M:%S.%f")[:-2]))
-        if '63' in self.prefix_for_print:
-            print_cur_time("!!!!ssafter mlp63 ")
         return hidden_states, residual
 
 

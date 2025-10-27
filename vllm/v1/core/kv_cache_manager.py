@@ -266,7 +266,7 @@ class KVCacheManager:
             new_computed_blocks=new_computed_block_list,
             num_encoder_tokens=num_encoder_tokens,
         )
-        
+
         if num_blocks_to_allocate > self.block_pool.get_num_free_blocks():
             # Cannot allocate new blocks
             return None
@@ -283,7 +283,7 @@ class KVCacheManager:
         # avoid the case where the new blocks cannot be allocated.
         self.coordinator.save_new_computed_blocks(request.request_id,
                                                   new_computed_block_list)
-        
+
         new_blocks = self.coordinator.allocate_new_blocks(
             request.request_id, num_tokens_need_slot, num_encoder_tokens)
 

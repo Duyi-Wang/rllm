@@ -318,7 +318,7 @@ class MultiprocExecutor(Executor):
         self.rpc_broadcast_mq = None
 
     def check_health(self) -> None:
-        self.collective_rpc("check_health", timeout=1000)
+        self.collective_rpc("check_health", timeout=10)
         return
 
     @property

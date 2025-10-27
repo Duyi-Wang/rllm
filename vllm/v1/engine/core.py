@@ -289,14 +289,11 @@ class EngineCore:
         if not self.scheduler.has_requests():
             return {}, False
         scheduler_output = self.scheduler.schedule()
-        # logger.info(f"zovlog:========>preapre execute model,before that {scheduler_output = }")
         model_output = self.execute_model_with_error_logging(
             self.model_executor.execute_model,  # type: ignore
             scheduler_output)
-        # logger.info(f"zovlog0831: quit model forward,check is none {scheduler_output = },{model_output = }")
         engine_core_outputs = self.scheduler.update_from_output(
             scheduler_output, model_output)  # type: ignore
-        # logger.info(f"zovlog:++++++> {engine_core_outputs = }")
 
         return (engine_core_outputs,
                 scheduler_output.total_num_scheduled_tokens > 0)
@@ -443,12 +440,6 @@ class EngineCore:
         # Note on thread safety: no race condition.
         # `mm_receiver_cache` is reset at the end of LLMEngine init,
         # and will only be accessed in the input processing thread afterwards.
-        def print_cur_time(strr):
-            from datetime import datetime
-
-            now = datetime.now()
-            logger.info(strr+str(now.strftime("%H:%M:%S.%f")[:-2]))
-        print_cur_time("!!!engine got request")
         if self.mm_receiver_cache is not None and request.mm_features:
             request.mm_features = (
                 self.mm_receiver_cache.get_and_update_features(
@@ -727,7 +718,6 @@ class EngineCoreProc(EngineCore):
                 logger.exception("EngineCore failed to start.")
             else:
                 logger.exception("EngineCore encountered a fatal error.")
-                logger.error(f"zovlog:========> engine go die...............e = {e}")
                 engine_core._send_engine_dead()
             raise e
         finally:
@@ -842,7 +832,7 @@ class EngineCoreProc(EngineCore):
         # Msgpack serialization decoding.
         add_request_decoder = MsgpackDecoder(EngineCoreRequest)
         generic_decoder = MsgpackDecoder()
-        # logger.info(f"zovlog:------>{input_addresses = }")
+
         with ExitStack() as stack, zmq.Context() as ctx:
             input_sockets = [
                 stack.enter_context(
@@ -882,9 +872,7 @@ class EngineCoreProc(EngineCore):
             ready_event.set()
             del ready_event
             while True:
-                # logger.info(f"zovlog:--------> input socket polling!")
                 for input_socket, _ in poller.poll():
-                    # logger.info(f"zovlog:--------> input socket triggered!")
                     # (RequestType, RequestData)
                     type_frame, *data_frames = input_socket.recv_multipart(
                         copy=False)
@@ -898,9 +886,7 @@ class EngineCoreProc(EngineCore):
                     else:
                         request = generic_decoder.decode(data_frames)
 
-                    # Push to input queue for core busy loop. 
-                    # if not isinstance(request[0],int): 
-                    #     logger.info(f"zovlog:process input socket {request = },{type(request) = },{request[0].kv_transfer_params = }")
+                    # Push to input queue for core busy loop.
                     self.input_queue.put_nowait((request_type, request))
 
     def process_output_sockets(self, output_paths: list[str],
@@ -930,18 +916,12 @@ class EngineCoreProc(EngineCore):
                     ctx, coord_output_path, zmq.PUSH, bind=False,
                     linger=4000)) if coord_output_path is not None else None
             max_reuse_bufs = len(sockets) + 1
-            def print_cur_time(strr):
-                from datetime import datetime
-                now = datetime.now()
-                logger.info(strr+str(now.strftime("%H:%M:%S.%f")[:-2]))
+
             while True:
                 output = self.output_queue.get()
-                # logger.info(f"zovlog:=====> output socket get output index:{output}")
                 if output == EngineCoreProc.ENGINE_CORE_DEAD:
                     for socket in sockets:
-                       
                         socket.send(output)
-                        print_cur_time(f"!!!engine cnmde send to socket ")
                     break
                 assert not isinstance(output, bytes)
                 client_index, outputs = output
@@ -960,8 +940,6 @@ class EngineCoreProc(EngineCore):
 
                 buffer = reuse_buffers.pop() if reuse_buffers else bytearray()
                 buffers = encoder.encode_into(outputs, buffer)
-                # print_cur_time(f"!!!engine core output send to socket ")
-
                 tracker = sockets[client_index].send_multipart(buffers,
                                                                copy=False,
                                                                track=True)

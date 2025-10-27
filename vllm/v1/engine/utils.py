@@ -114,7 +114,6 @@ class CoreEngineProcManager:
 
             # Start EngineCore in background process.
             local_dp_ranks.append(local_index)
-            # assert 0, f"zovlog:=======target_fn = {target_fn}"
             self.processes.append(
                 context.Process(target=target_fn,
                                 name=f"EngineCore_DP{global_index}",

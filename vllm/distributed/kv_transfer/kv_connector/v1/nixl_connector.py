@@ -289,7 +289,7 @@ class NixlConnectorScheduler:
     def update_state_after_alloc(self, request: "Request",
                                  blocks: "KVCacheBlocks",
                                  num_external_tokens: int):
-        logger.info(f"zovlog: -------------- enter update_state_after_alloc,request = {request},{request.kv_transfer_params = }")
+
         params = request.kv_transfer_params
         logger.debug(
             "NIXLConnector update_state_after_alloc: "
@@ -662,7 +662,6 @@ class NixlConnectorWorker:
                                    remote_engine_id: EngineId, meta: ReqMeta):
         # Do NIXL handshake in background and add to _ready_requests when done.
         fut = self._handshake_futures.get(remote_engine_id)
-        
         if fut is None:
             fut = self._handshake_initiation_executor.submit(
                 self._nixl_handshake, meta.remote_host, meta.remote_port,
@@ -670,7 +669,6 @@ class NixlConnectorWorker:
             self._handshake_futures[remote_engine_id] = fut
 
             def done_callback(f: Future[dict[int, str]], eid=remote_engine_id):
-                
                 with self._handshake_lock:
                     del self._handshake_futures[eid]
                     try:

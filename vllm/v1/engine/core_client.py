@@ -525,7 +525,6 @@ class MPClient(EngineCoreClient):
 
     def ensure_alive(self):
         if self.resources.engine_dead:
-            # logger.info(f"zovlog:0828===========> ensure_alive failed,raise engine dead")
             raise EngineDeadError()
 
     def add_pending_message(self, tracker: zmq.MessageTracker, msg: Any):
@@ -809,7 +808,6 @@ class AsyncMPClient(MPClient):
         async def process_outputs_socket():
             try:
                 while True:
-                    # try:
                     frames = await output_socket.recv_multipart(copy=False)
                     resources.validate_alive(frames)
                     outputs: EngineCoreOutputs = decoder.decode(frames)
@@ -817,21 +815,20 @@ class AsyncMPClient(MPClient):
                         _process_utility_output(outputs.utility_output,
                                                 utility_results)
                         continue
+
                     if output_handler is not None:
                         assert _self_ref is not None
                         _self = _self_ref()
                         if not _self:
                             # Client has been garbage collected, abort.
                             return
-                        # try:
                         await output_handler(_self, outputs)
+
                     if outputs.outputs or outputs.scheduler_stats:
                         outputs_queue.put_nowait(outputs)
             except Exception as e:
-                # logger.info(f"zovlog:0828==========> catch an Exception = {e}")
                 outputs_queue.put_nowait(e)
             except asyncio.CancelledError:
-                # logger.info(f"zovlog:0828==========> catch an asyncio.CancelledError,send EngineDeadError")
                 outputs_queue.put_nowait(EngineDeadError())
 
         resources.output_queue_task = asyncio.create_task(
@@ -844,7 +841,6 @@ class AsyncMPClient(MPClient):
         # from this (run_output_handler) task to shut down the server.
         assert self.outputs_queue is not None
         outputs = await self.outputs_queue.get()
-        # logger.info(f"zovlog:0828===============> get_output_async output = {outputs}")
         if isinstance(outputs, Exception):
             raise self._format_exception(outputs) from None
         return outputs

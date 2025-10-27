@@ -207,7 +207,6 @@ class Scheduler(SchedulerInterface):
         req_index = 0
         while req_index < len(self.running) and token_budget > 0:
             request = self.running[req_index]
-            # logger.info(f"zovlog:========> got request in scheduler : {request.kv_transfer_params = }")
 
             num_new_tokens = (request.num_tokens_with_spec +
                               request.num_output_placeholders -
@@ -399,7 +398,6 @@ class Scheduler(SchedulerInterface):
                     # Total computed tokens (local + external).
                     num_computed_tokens = (num_new_local_computed_tokens +
                                            num_external_computed_tokens)
-                    # logger.info(f"zovlog:--------> {new_computed_blocks = }, {num_new_local_computed_tokens = } ,{num_external_computed_tokens=}, {load_kv_async=} ,{num_computed_tokens = }")
                 # KVTransfer: WAITING reqs have num_computed_tokens > 0
                 # after async KV recvs are completed.
                 else:
@@ -420,7 +418,6 @@ class Scheduler(SchedulerInterface):
                     # We use `request.num_tokens` instead of
                     # `request.num_prompt_tokens` to consider the resumed
                     # requests, which have output tokens.
-                    # logger.info(f"zovlog:==============> request.num_tokens = {request.num_tokens},{num_computed_tokens = }")
                     num_new_tokens = request.num_tokens - num_computed_tokens
                     if (0 < self.scheduler_config.long_prefill_token_threshold
                             < num_new_tokens):
@@ -485,22 +482,19 @@ class Scheduler(SchedulerInterface):
                 )
 
                 if new_blocks is None:
-                    # logger.info(f"zovlog:0831 ============> quit allocate_slots {new_blocks = }!!!!!!!!!!!!!!!!!!!!!!")
                     # The request cannot be scheduled.
                     break
-                # logger.info(f"zovlog:0827 ============> quit allocate_slots {new_blocks = }")
+
                 # KVTransfer: the connector uses this info to determine
                 # if a load is needed. Note that
                 # This information is used to determine if a load is
                 # needed for this request.
-                # logger.info(f"zovlog:============> prepare self.connector.update_state_after_alloc,{self.connector = },{request.kv_transfer_params = }")
                 if self.connector is not None:
                     self.connector.update_state_after_alloc(
                         request,
                         new_computed_blocks + new_blocks,
                         num_external_computed_tokens,
                     )
-                
 
                 # Request was already popped from self.waiting
                 # unless it was re-added above due to new_blocks being None.
@@ -870,15 +864,6 @@ class Scheduler(SchedulerInterface):
         scheduler_output: SchedulerOutput,
         model_runner_output: ModelRunnerOutput,
     ) -> dict[int, EngineCoreOutputs]:
-        # logger.info(f"zovlog0831:------------->call update_from_output,{model_runner_output = }")
-        
-        
-        def print_cur_time(strr):
-            from datetime import datetime
-            now = datetime.now()
-            logger.info(strr+str(now.strftime("%H:%M:%S.%f")[:-2]))
-            
-        # print_cur_time("!!!!update_from_output ")
         sampled_token_ids = model_runner_output.sampled_token_ids
         logprobs = model_runner_output.logprobs
         prompt_logprobs_dict = model_runner_output.prompt_logprobs_dict
@@ -999,7 +984,6 @@ class Scheduler(SchedulerInterface):
             self.waiting.remove_requests(stopped_preempted_reqs)
 
         # KV Connector: update state for finished KV Transfers.
-
         if model_runner_output.kv_connector_output:
             self._update_from_kv_xfer_finished(
                 model_runner_output.kv_connector_output)
@@ -1244,7 +1228,6 @@ class Scheduler(SchedulerInterface):
             return False, None
 
         (block_ids, ) = self.kv_cache_manager.get_block_ids(request.request_id)
-        # logger.info(f"zovlog:---------> call _connector_finished function, {len(block_ids) = }")
         return self.connector.request_finished(request, block_ids)
 
     def _update_waiting_for_remote_kv(self, request: Request) -> bool:
