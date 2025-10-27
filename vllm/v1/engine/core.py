@@ -53,7 +53,7 @@ from vllm.v1.structured_output import StructuredOutputManager
 from vllm.version import __version__ as VLLM_VERSION
 
 logger = init_logger(__name__)
-
+from vllm.utils.dump_info import dump_info_print
 POLLING_TIMEOUT_S = 2.5
 HANDSHAKE_TIMEOUT_MINS = 5
 
@@ -286,6 +286,7 @@ class EngineCore:
             scheduler_output)
         engine_core_outputs = self.scheduler.update_from_output(
             scheduler_output, model_output)  # type: ignore
+        dump_info_print()
 
         return (engine_core_outputs,
                 scheduler_output.total_num_scheduled_tokens > 0)

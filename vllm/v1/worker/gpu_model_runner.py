@@ -160,7 +160,6 @@ class AsyncGPUModelRunnerOutput(AsyncModelRunnerOutput):
         This function blocks until the copy is finished.
         """
         self._async_copy_ready_event.synchronize()
-        dump_info_print()
 
         # Release the device tensor once the copy has completed
         del self._sampled_token_ids
