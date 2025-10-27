@@ -573,8 +573,8 @@ class MoRIIOConnectorScheduler:
         }
         serialized_data = msgpack.dumps(data)
         self.paths[path].send(serialized_data)
-    def update_state_after_alloc(self, request: "Request", # 包含remote使用到的blockid
-                                 blocks: "KVCacheBlocks", # local 分配好的blockid
+    def update_state_after_alloc(self, request: "Request", 
+                                 blocks: "KVCacheBlocks",
                                  num_external_tokens: int,
                                  connector_worker: Optional["MoRIIOConnectorWorker"]=None):
         
@@ -599,7 +599,6 @@ class MoRIIOConnectorScheduler:
                         local_block_ids = blocks.get_block_ids()[0]
                         assert len(local_block_ids) <= len(remote_block_ids)
                         if len(local_block_ids) == len(remote_block_ids):
-                            # 全部需要load,pass
                             pass
                         else:
                             local_block_ids = remote_block_ids[-len(local_block_ids):]
@@ -682,7 +681,7 @@ class MoRIIOConnectorScheduler:
         should be freed now or will be sent asynchronously and freed later.
         """
 
-        params = request.kv_MOritransfer_params
+        params = request.kv_transfer_params
         logger.debug(
             "MoriioConnector request_finished, request_status=%s, "
             "kv_transfer_params=%s", request.status, params)
