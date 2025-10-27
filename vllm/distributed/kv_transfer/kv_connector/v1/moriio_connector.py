@@ -103,9 +103,11 @@ class MoRIIOMode(Enum):
     READ = "read"
     WRITE = "write"
 
+logger = init_logger(__name__)
 
 def get_moriio_mode() -> MoRIIOMode:
     read_mode = os.environ.get('MORIIO_CONNECTOR_READ_MODE', 'false').lower()
+    logger.info(f"MoRIIO Connector Read Mode = {read_mode}")
     if read_mode in ('true', '1', 'yes', 'on'):
         return MoRIIOMode.READ
     else:
@@ -113,7 +115,6 @@ def get_moriio_mode() -> MoRIIOMode:
 
 
 GLOBAL_MORIIO_MODE = get_moriio_mode()
-logger = init_logger(__name__)
 
 try:
     import mori
@@ -1092,7 +1093,11 @@ class MoRIIOConnectorWorker:
 
     def _prepare_layer_transfer(self, task: WriteTask,
                                 request_info: RemoteAllocInfo) -> LayerTransferPlan:
+        request_id = task.request_id
         layer_name = task.layer_name
+        local_block_ids = task.local_block_ids
+        remote_block_ids = request_info.block_ids
+
         is_mla = (len(self.kv_cache_shape) == 3)
         sess_idx = list(self.layer_name_to_local_kv_cache_metadata.keys()).index(layer_name)
         sz = self.kv_caches[layer_name].element_size()
@@ -1108,8 +1113,6 @@ class MoRIIOConnectorWorker:
             block_stride = stride[1]
         transfer_size_byte = blksize * hn * hs * sz
         
-        local_block_ids = task.local_block_ids
-        remote_block_ids = request_info.block_ids
         if request_info.transfer_offset is None:
             per_block = 1 if is_mla else 2
             total = len(local_block_ids) * per_block
@@ -1137,7 +1140,7 @@ class MoRIIOConnectorWorker:
 
         a, b, c = request_info.transfer_offset
         return LayerTransferPlan(
-            request_id=task.request_id,
+            request_id=request_id,
             layer_name=layer_name,
             sess_idx=sess_idx,
             transfer_local_offsets=a,
@@ -1707,7 +1710,6 @@ class MoRIIOConnectorWorker:
 
     def _write_blocks_for_req(self, req_id: str, meta: ReqMeta, layer_name,
                               kv_layer):
-        no_blocking = True
 
         self.schedule_write_blocks(request_id=req_id,
                                    dst_engine_id=meta.remote_engine_id,
