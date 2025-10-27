@@ -133,7 +133,6 @@ class MoRIIOWrapper():
         self.kv_caches = None
         self.paths={}
         
-
     def set_moriio_engine(self,moriio_engine):
         assert moriio_engine is not None,"You Cannot pass None engine to MoRIIOWrapper!"
         self.moriio_engine = moriio_engine
@@ -149,9 +148,8 @@ class MoRIIOWrapper():
     def register_remote_engine(self,remote_packed_engine_metadata):
         consumer_engine_metadata = EngineDesc.unpack(remote_packed_engine_metadata)
         self.moriio_engine.register_remote_engine(consumer_engine_metadata)
-        #TODO, bind for req
         self.has_register_remote_engine = True 
-        return consumer_engine_metadata.key # str,engine name
+        return consumer_engine_metadata.key 
     
     def register_local_tensor(self,tensor:torch.Tensor):
         try:
@@ -178,7 +176,7 @@ class MoRIIOWrapper():
             self.moriio_engine.allocate_transfer_uid())
       
         self.transfer_status.append(transfer_status)
-    def read_remote_data_s(self,transfer_size_byte,local_offset = 0,remote_offset = 0,session=None):
+    def read_remote_data_single(self,transfer_size_byte,local_offset = 0,remote_offset = 0,session=None):
         assert self.local_memory_registered,"You have not register local memory data!"
    
         transfer_status = session.read(
@@ -200,7 +198,7 @@ class MoRIIOWrapper():
             )
         with self.lock:
             self.transfer_status.append(transfer_status)
-    def write_remote_data_s(self,transfer_size_byte,local_offset = 0,remote_offset = 0, sess_idx=0):
+    def write_remote_data_single(self,transfer_size_byte,local_offset = 0,remote_offset = 0, sess_idx=0):
         assert self.local_memory_registered,"You have not register local memory data!"
    
         transfer_status = self.sessiones[sess_idx].write(
@@ -212,17 +210,15 @@ class MoRIIOWrapper():
             self.transfer_status.append(transfer_status)
 
 
-    def waiting_for_read_complete(self):
+    def waiting_for_transfer_complete(self):
         if not self.transfer_status:
             return
         
-        # 批量处理，避免频繁的list操作
         transfers_to_wait = []
         with self.lock:
             transfers_to_wait = self.transfer_status[:]
             self.transfer_status.clear()
         
-        # 并发等待（如果MoRIIO支持）
         for status in transfers_to_wait:
             try:
                 status.Wait()
@@ -232,25 +228,17 @@ class MoRIIOWrapper():
                 logger.error(f"Transfer {status} failed: {e}")
                 raise
             
-    def get_hash(self,n,local_block_ids):
-        return (self.kv_caches[list(self.kv_caches.keys())[n]][0,local_block_ids,:,:,:].sum().item(),self.kv_caches[list(self.kv_caches.keys())[n]][1,local_block_ids,:,:,:].sum().item())
-    def get_all_hash(self,local_block_ids):
-        hash_list = []
-        for n in range(len(self.kv_caches)):
-            hash_list.append(self.get_hash(n,local_block_ids))
-        return hash_list
+  
     def async_wait_reqid(self, kv_caches=None):
-        """异步等待请求ID，处理远程块分配和完成通知"""
         if kv_caches is not None:
             self.kv_caches = kv_caches
-        
+
         assert self.notify_port is not None, "Notify port cannot be None"
-        
+
         if self.notify_thread is not None:
             return
-        
+
         def _async_wait():
-            """后台线程处理消息接收"""
             host = "*"
             path = make_zmq_path("tcp", host, self.notify_port)
             logger.info(f"Node starting to listen notify from path = {path}")
@@ -268,9 +256,7 @@ class MoRIIOWrapper():
         self.notify_thread.start()
 
     def _handle_message(self, msg: bytes):
-        """处理接收到的消息"""
         try:
-            # 尝试解析结构化数据
             data = msgpack.loads(msg)
             if isinstance(data, dict) and "req_id" in data:
                 self._handle_structured_message(data)
@@ -278,7 +264,6 @@ class MoRIIOWrapper():
         except (msgpack.exceptions.ExtraData, msgpack.exceptions.UnpackException):
             pass
         
-        # 处理字符串消息
         try:
             msg_str = msg.decode("UTF-8")
             if msg_str.startswith("cmpl"):
@@ -287,17 +272,15 @@ class MoRIIOWrapper():
             logger.warning(f"Received non-UTF8 message: {msg}")
 
     def _handle_structured_message(self, data: dict):
-        """处理结构化消息（远程块分配）"""
         req_id = data["req_id"]
         int_list = data.get("int_list", [])
         msg_type = data.get("type", "unknown")
-                
+    
         with self.lock:
             self.done_remote_allocate_req.append(req_id)
             self.done_remote_allocate_req_dict[req_id] = RemoteAllocInfo(int_list)
 
     def _handle_completion_message(self, msg: str):
-        """处理完成消息"""
         with self.lock:
             if GLOBAL_ROLE == ROLE.PRODUCER:
                 logger.info(f"zovlog:P received req id {msg} for release")
@@ -306,7 +289,6 @@ class MoRIIOWrapper():
                 self.done_write_cache_req_ids.append(msg)
                 self.debug_id += 1
       
-    # 使用msgpack序列化
     def send_notify(self, req_ids, remote_ip=None, remote_port=None):
         """发送通知消息到远程节点"""
         if not remote_ip or not remote_port:
@@ -315,7 +297,6 @@ class MoRIIOWrapper():
         
         path = make_zmq_path("tcp", remote_ip, str(remote_port))
         
-        # 延迟创建socket，只有在需要时才创建
         if path not in self.paths:
             ctx = zmq.Context()
             sock = make_zmq_socket(
@@ -326,10 +307,8 @@ class MoRIIOWrapper():
             )
             self.paths[path] = sock
         
-        # 标准化请求ID为列表
         req_list = req_ids if isinstance(req_ids, list) else [req_ids]
         
-        # 批量发送消息
         sock = self.paths[path]
         try:
             for req_id in req_list:
@@ -339,7 +318,6 @@ class MoRIIOWrapper():
                 sock.send(req_id.encode("utf-8"))
         except Exception as e:
             logger.error(f"Failed to send notification to {path}: {e}")
-            # 可选：从缓存中移除失败的socket
             self.paths.pop(path, None)
             raise
     
@@ -365,10 +343,6 @@ class MoRIIOWrapper():
             self.done_remote_allocate_req= []
             self.done_remote_allocate_req_dict= {}
         return done_remote_allocate
-
-    
-
-                
 
 class MoRIIOAgentMetadata(
         msgspec.Struct,
@@ -528,7 +502,7 @@ class MoRIIOConnector(KVConnectorBase_V1):
     def wait_for_save(self):
         """NixlConnector does not save explicitly."""
         
-        # self.connector_worker.moriio_wrapper.waiting_for_read_complete()
+        # self.connector_worker.moriio_wrapper.waiting_for_transfer_complete()
         pass
 
 
@@ -1169,20 +1143,20 @@ class MoRIIOConnectorWorker:
                 # logger.info(f"write {layer_name=}, {remote_block_ids=}, {a=}, {b=}, {sess_idx=}")
                 self.moriio_wrapper.write_remote_data(c, a, b, sessiones[sess_idx])
                 request_info.writes_done+=1
-                # self.moriio_wrapper.waiting_for_read_complete()
+                # self.moriio_wrapper.waiting_for_transfer_complete()
                 
                 # task.event.record()
                 # torch.cuda.synchronize()
 
             else:
                 for idx in range(len(a)):
-                    self.moriio_wrapper.write_remote_data_s(c[idx], a[idx], b[idx], sess_idx)
-                self.moriio_wrapper.waiting_for_read_complete()
+                    self.moriio_wrapper.write_remote_data_single(c[idx], a[idx], b[idx], sess_idx)
+                self.moriio_wrapper.waiting_for_transfer_complete()
 
             # if self._is_last_layer(layer_name):# #乱序造成的
             if request_info.writes_done==self.num_layers:
                 # time.sleep(5)  # 让出时间片，尽量让 notify 在 write 之后
-                self.moriio_wrapper.waiting_for_read_complete()
+                self.moriio_wrapper.waiting_for_transfer_complete()
                 # time.sleep(1)
                 # if request_info.writes_done!=self.num_layers:
                 #     logger.info(f"{request_info.writes_done}")
@@ -1768,17 +1742,6 @@ class MoRIIOConnectorWorker:
     def this_layer_write_meta_offset(self):
         return self.merged_local, self.merged_remote, self.merged_sizes
              
-    def get_hash(self,n,local_block_ids):
-        return self.kv_caches[list(self.kv_caches.keys())[n]][:,local_block_ids,:,:,:].sum()
-    def get_all_hash(self,local_block_ids):
-        hash_list = []
-        for n in range(len(self.kv_caches)):
-            hash_list.append(self.get_hash(n,local_block_ids).item())
-    
-        
-        
-   
-
     def merge_contiguous_blocks_fast_v2(self,offsets_local: List[int],offsets_remote: List[int],sizes: List[int],assume_sorted: bool = False) -> Tuple[List[int], List[int], List[int]]:
         n = len(offsets_local)
         if n == 0:
@@ -1912,7 +1875,7 @@ class MoRIIOConnectorWorker:
             else:
                 for i in range(len(a)):
                     self.moriio_wrapper.read_remote_data([c[i]], [a[i]], [b[i]], sessiones[sess_idx])
-            self.moriio_wrapper.waiting_for_read_complete()
+            self.moriio_wrapper.waiting_for_transfer_complete()
 
 
 @contextlib.contextmanager
