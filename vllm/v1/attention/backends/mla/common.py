@@ -263,6 +263,8 @@ logger = init_logger(__name__)
 
 CUDNN_WORKSPACE_SIZE = 12800
 
+from vllm.utils.dump_info import dump_info_op
+
 
 class MLACommonBackend(AttentionBackend):
 
@@ -1756,14 +1758,14 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
 
             # call decode attn
             if fp8_attention:
-                torch.ops.vllm.dump_info("Decode decode_ql_nope:", decode_q[0])
-                torch.ops.vllm.dump_info("Decode decode_q_pe:", decode_q[1])
+                dump_info_op("Decode decode_ql_nope:", decode_q[0])
+                dump_info_op("Decode decode_q_pe:", decode_q[1])
             else:
-                torch.ops.vllm.dump_info("Decode decode_q:", decode_q)
-            torch.ops.vllm.dump_info("Decode kv_cache:", kv_cache)
+                dump_info_op("Decode decode_q:", decode_q)
+            dump_info_op("Decode kv_cache:", kv_cache)
             attn_out, lse = self._forward_decode(decode_q, kv_cache,
                                                  attn_metadata, layer)
-            torch.ops.vllm.dump_info("Decode attn_out:", attn_out)
+            dump_info_op("Decode attn_out:", attn_out)
 
             # recorect dcp attn_out with lse.
             if self.dcp_world_size > 1:
