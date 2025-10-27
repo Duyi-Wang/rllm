@@ -947,7 +947,6 @@ class MoRIIOConnectorWorker:
         # have the same number of blocks.
         self.dst_num_blocks: dict[EngineId, int] = {}
         self._registered_descs: list[Any] = []
-        self.finished_int = 0
         # In progress transfers.
         # [req_id -> list[handle]]
         self._recving_transfers = defaultdict[ReqId, list[Transfer]](list)
@@ -1108,14 +1107,7 @@ class MoRIIOConnectorWorker:
             ktov_stride = stride[0]
             block_stride = stride[1]
         transfer_size_byte = blksize * hn * hs * sz
-
-        # if is_mla:
-        #     blknum, blksize, hs = self.kv_cache_shape
-        #     hn = 1
-        #     transfer_size_byte = blksize * hs * sz
-        # else:
-        #     _, blknum, blksize, hn, hs = self.kv_cache_shape
-        #     transfer_size_byte = blksize * hn * hs * sz
+        
         local_block_ids = task.local_block_ids
         remote_block_ids = request_info.block_ids
         if request_info.transfer_offset is None:
@@ -1138,9 +1130,7 @@ class MoRIIOConnectorWorker:
                     offset_remote[w] = sz * (1 * ktov_stride +
                                                 rb * block_stride)
                     w += 1
-            # raw_l, raw_r, raw_s = self._compute_raw_offsets(task.local_block_ids,
-            #                                                 is_mla,
-            #                                                 transfer_size_byte)
+         
             merged_l, merged_r, merged_s = self.merge_contiguous_blocks_fast_v2(
                 offset_local, offset_remote, transfer_sizes, assume_sorted=True)
             request_info.transfer_offset = (merged_l, merged_r, merged_s)
@@ -1595,7 +1585,6 @@ class MoRIIOConnectorWorker:
             done_sending, done_recving = set(
             ), self.moriio_wrapper.pop_finished_write_req_ids()
 
-        self.finished_int += 1
         return done_sending, done_recving
 
     def _get_new_notifs(self) -> set[str]:
