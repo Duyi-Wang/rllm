@@ -438,3 +438,8 @@ class FlashInferAllToAllManager(All2AllManagerBase):
                 self.prepare_workspace_tensor = None
                 self.mapping = None
                 self.initialized = False
+
+
+class MoriAll2AllManager(All2AllManagerBase):
+    def __init__(self, cpu_group):
+        super().__init__(cpu_group)
