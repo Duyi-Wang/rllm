@@ -125,7 +125,7 @@ AttnMetadataDict: TypeAlias = dict[str, AttentionMetadata]
 PerLayerAttnMetadata: TypeAlias = Union[list[AttnMetadataDict],
                                         AttnMetadataDict]
 
-
+from vllm.utils.dump_info import dump_info_print
 # Wrapper for ModelRunnerOutput to support overlapped execution.
 class AsyncGPUModelRunnerOutput(AsyncModelRunnerOutput):
 
@@ -160,6 +160,7 @@ class AsyncGPUModelRunnerOutput(AsyncModelRunnerOutput):
         This function blocks until the copy is finished.
         """
         self._async_copy_ready_event.synchronize()
+        dump_info_print()
 
         # Release the device tensor once the copy has completed
         del self._sampled_token_ids
