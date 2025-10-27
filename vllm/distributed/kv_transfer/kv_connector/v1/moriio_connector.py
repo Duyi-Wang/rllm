@@ -64,7 +64,16 @@ class WriteTask:
     enqueue_time: float = field(default_factory=time.perf_counter)
     retried: int = 0
 
-
+@dataclass
+class LayerTransferPlan:
+    request_id: str
+    layer_name: str
+    sess_idx: int
+    transfer_local_offsets: list[int]
+    transfer_remote_offsets: list[int]
+    transfer_sizes: list[int]
+    use_batch: bool = True
+    
 @dataclass
 class RemoteAllocInfo:
     block_ids: list[int]
@@ -1073,92 +1082,119 @@ class MoRIIOConnectorWorker:
                 remote_engine_id] = cur_remote_engine_sessions
         return self.builded_write_session[remote_engine_id]
 
-    def _execute_write_task(self, task: WriteTask):
-        request_id = task.request_id
-        local_block_ids = task.local_block_ids
 
-        request_info = self.moriio_wrapper.done_remote_allocate_req_dict[
-            request_id]
-        remote_block_ids = request_info.block_ids
-        if remote_block_ids is None:
-            return
+    def _get_remote_alloc_info(self, request_id: str) -> RemoteAllocInfo:
+        try:
+            return self.moriio_wrapper.done_remote_allocate_req_dict[request_id]
+        except KeyError:
+            raise RuntimeError(f"RemoteAllocInfo missing for request {request_id}")
 
+  
+
+    def _prepare_layer_transfer(self, task: WriteTask,
+                                request_info: RemoteAllocInfo) -> LayerTransferPlan:
         layer_name = task.layer_name
+        is_mla = (len(self.kv_cache_shape) == 3)
+        sess_idx = list(self.layer_name_to_local_kv_cache_metadata.keys()).index(layer_name)
+        sz = self.kv_caches[layer_name].element_size()
+        stride = self.kv_caches[layer_name].stride()
+        if is_mla:
+            blknum, blksize, hs = self.kv_cache_shape
+            hn = 1
+            block_stride = stride[0]
+            ktov_stride = None
+        else:
+            _, blknum, blksize, hn, hs = self.kv_cache_shape
+            ktov_stride = stride[0]
+            block_stride = stride[1]
+        transfer_size_byte = blksize * hn * hs * sz
 
+        # if is_mla:
+        #     blknum, blksize, hs = self.kv_cache_shape
+        #     hn = 1
+        #     transfer_size_byte = blksize * hs * sz
+        # else:
+        #     _, blknum, blksize, hn, hs = self.kv_cache_shape
+        #     transfer_size_byte = blksize * hn * hs * sz
+        local_block_ids = task.local_block_ids
+        remote_block_ids = request_info.block_ids
+        if request_info.transfer_offset is None:
+            per_block = 1 if is_mla else 2
+            total = len(local_block_ids) * per_block
+            offset_local = [0] * total
+            offset_remote = [0] * total
+            transfer_sizes = [transfer_size_byte] * total
+            w = 0
+            for i, lb in enumerate(local_block_ids):
+                rb = remote_block_ids[i]
+                # K
+                offset_local[w] = sz * (lb * block_stride)
+                offset_remote[w] = sz * (rb * block_stride)
+                w += 1
+                if not is_mla:
+                    # V
+                    offset_local[w] = sz * (1 * ktov_stride +
+                                            lb * block_stride)
+                    offset_remote[w] = sz * (1 * ktov_stride +
+                                                rb * block_stride)
+                    w += 1
+            # raw_l, raw_r, raw_s = self._compute_raw_offsets(task.local_block_ids,
+            #                                                 is_mla,
+            #                                                 transfer_size_byte)
+            merged_l, merged_r, merged_s = self.merge_contiguous_blocks_fast_v2(
+                offset_local, offset_remote, transfer_sizes, assume_sorted=True)
+            request_info.transfer_offset = (merged_l, merged_r, merged_s)
+
+        a, b, c = request_info.transfer_offset
+        return LayerTransferPlan(
+            request_id=task.request_id,
+            layer_name=layer_name,
+            sess_idx=sess_idx,
+            transfer_local_offsets=a,
+            transfer_remote_offsets=b,
+            transfer_sizes=c,
+            use_batch=True
+        )
+
+    def _do_layer_write(self, plan: LayerTransferPlan, sessions):
+        if plan.use_batch:
+            self.moriio_wrapper.write_remote_data(
+                plan.transfer_sizes,
+                plan.transfer_local_offsets,
+                plan.transfer_remote_offsets,
+                sessions[plan.sess_idx])
+        else:
+            for i in range(len(plan.transfer_local_offsets)):
+                self.moriio_wrapper.write_remote_data_single(
+                    plan.transfer_sizes[i],
+                    plan.transfer_local_offsets[i],
+                    plan.transfer_remote_offsets[i],
+                    plan.sess_idx)
+
+    def _finalize_write_if_finished(self, request_id: str, request_info: RemoteAllocInfo, task: WriteTask):
+        request_info.writes_done += 1
+        if request_info.writes_done == self.num_layers:
+            #TODO:  wait current req_id transfer complete
+            self.moriio_wrapper.waiting_for_transfer_complete()
+            self.moriio_wrapper.send_notify(
+                request_id,
+                task.remote_ip,
+                task.remote_notify_port  + self.tp_rank
+            )
+
+    def _execute_write_task(self, task: WriteTask):
         if GLOBAL_MORIIO_MODE == MoRIIOMode.READ:
             return
-        layerwise = True
-        use_batch = True
+        request_info = self._get_remote_alloc_info(task.request_id)
+        if request_info.block_ids is None:
+            # logger.debug("Request %s remote block ids not ready", task.request_id)
+            return
         task.event.synchronize()
-
         sessions = self._get_built_session(task.dst_engine_id)
-
-        stride = self.kv_caches[layer_name].stride()
-        is_mla = (len(self.kv_cache_shape) == 3)
-
-        if layerwise:
-            if is_mla:
-                blknum, blksize, hs = self.kv_cache_shape
-                hn = 1
-                block_stride = stride[0]
-                ktov_stride = None
-            else:
-                _, blknum, blksize, hn, hs = self.kv_cache_shape
-                ktov_stride = stride[0]
-                block_stride = stride[1]
-
-            sess_idx = list(
-                self.layer_name_to_local_kv_cache_metadata.keys()).index(
-                    layer_name)
-            sz = self.kv_caches[layer_name].element_size()
-            transfer_size_byte = blksize * hn * hs * sz
-
-            # if self._is_first_layer(layer_name):
-            if request_info.transfer_offset == None:
-                per_block = 1 if is_mla else 2
-                total = len(local_block_ids) * per_block
-                offset_local = [0] * total
-                offset_remote = [0] * total
-                transfer_sizes = [transfer_size_byte] * total
-                w = 0
-                for i, lb in enumerate(local_block_ids):
-                    rb = remote_block_ids[i]
-                    # K
-                    offset_local[w] = sz * (lb * block_stride)
-                    offset_remote[w] = sz * (rb * block_stride)
-                    w += 1
-                    if not is_mla:
-                        # V
-                        offset_local[w] = sz * (1 * ktov_stride +
-                                                lb * block_stride)
-                        offset_remote[w] = sz * (1 * ktov_stride +
-                                                 rb * block_stride)
-                        w += 1
-
-                request_info.transfer_offset = self.merge_contiguous_blocks_fast_v2(
-                    offset_local,
-                    offset_remote,
-                    transfer_sizes,
-                    assume_sorted=True)
-
-            a, b, c = request_info.transfer_offset
-            if use_batch:
-                self.moriio_wrapper.write_remote_data(c, a, b,
-                                                      sessions[sess_idx])
-                request_info.writes_done += 1
-
-            else:
-                for idx in range(len(a)):
-                    self.moriio_wrapper.write_remote_data_single(
-                        c[idx], a[idx], b[idx], sess_idx)
-                self.moriio_wrapper.waiting_for_transfer_complete()
-
-            if request_info.writes_done == self.num_layers:
-                self.moriio_wrapper.waiting_for_transfer_complete()
-
-                self.moriio_wrapper.send_notify(
-                    request_id, task.remote_ip,
-                    task.remote_notify_port + self.tp_rank)
+        plan = self._prepare_layer_transfer(task, request_info)
+        self._do_layer_write(plan, sessions)
+        self._finalize_write_if_finished(task.request_id, request_info,task)
+    
 
     def _ping(self, zmq_context):
         PING_INTERVAL = 10
