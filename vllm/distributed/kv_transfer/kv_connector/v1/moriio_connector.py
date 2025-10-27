@@ -69,7 +69,7 @@ class WriteTask:
 class RemoteAllocInfo:
     block_ids: list[int]
     writes_done: int = 0
-    transfer_offset: tuple[list[int], list[int], list[int]] = None
+    transfer_offset: tuple[list[int], list[int], list[int]] | None = None
 
 
 class ROLE(Enum):
@@ -78,7 +78,16 @@ class ROLE(Enum):
     NOTINIT = "notinit"
 
 
-GLOBAL_ROLE = ROLE.NOTINIT
+_role_lock = threading.Lock()
+_GLOBAL_ROLE: ROLE = ROLE.NOTINIT
+
+def set_role(role: ROLE):
+    global _GLOBAL_ROLE
+    with _role_lock:
+        _GLOBAL_ROLE = role
+
+def get_role() -> ROLE:
+    return _GLOBAL_ROLE
 
 
 class MoRIIOMode(Enum):
@@ -116,7 +125,6 @@ class MoRIIOWrapper:
         self.local_memory_registered = False
         self.local_memory_metadata = None
         self.transfer_status = []
-        self.infilght_transfer_req_ids = []
         self.remote_engine_ip = None
         self.notify_port = None
         self.notify_sock = None
@@ -128,8 +136,7 @@ class MoRIIOWrapper:
         self.notify_thread = None
         self.sock = None
         self.tp_rank = get_tensor_model_parallel_rank()
-        self.sessiones = []
-        self.has_register_remote_engine = False  #no use
+        self.sessions = []
         self.kv_caches = None
         self.paths = {}
 
@@ -149,7 +156,6 @@ class MoRIIOWrapper:
         consumer_engine_metadata = EngineDesc.unpack(
             remote_packed_engine_metadata)
         self.moriio_engine.register_remote_engine(consumer_engine_metadata)
-        self.has_register_remote_engine = True
         return consumer_engine_metadata.key
 
     def register_local_tensor(self, tensor: torch.Tensor):
@@ -215,7 +221,7 @@ class MoRIIOWrapper:
                                  sess_idx=0):
         assert self.local_memory_registered, "You have not register local memory data!"
 
-        transfer_status = self.sessiones[sess_idx].write(
+        transfer_status = self.sessions[sess_idx].write(
             local_offset, remote_offset, transfer_size_byte,
             self.moriio_engine.allocate_transfer_uid())
         with self.lock:
@@ -234,9 +240,10 @@ class MoRIIOWrapper:
             try:
                 status.Wait()
                 if not status.Succeeded():
-                    logger.warning(
+                    logger.error(
                         f"Transfer failed: {status.Message()}, Code: {status.Code()}"
                     )
+                    raise RuntimeError(f"MoRIIO transfer failed!")
             except Exception as e:
                 logger.error(f"Transfer {status} failed: {e}")
                 raise
@@ -298,7 +305,7 @@ class MoRIIOWrapper:
 
     def _handle_completion_message(self, msg: str):
         with self.lock:
-            if GLOBAL_ROLE == ROLE.PRODUCER:
+            if get_role() == ROLE.PRODUCER:
                 # logger.debug(f"P received req id {msg} for release")
                 self.done_req_ids.append(msg)
             else:
@@ -491,7 +498,7 @@ class MoRIIOConnector(KVConnectorBase_V1):
                       **kwargs) -> None:
 
         if GLOBAL_MORIIO_MODE == MoRIIOMode.WRITE:
-            if GLOBAL_ROLE == ROLE.CONSUMER:
+            if get_role() == ROLE.CONSUMER:
                 self.connector_worker.moriio_wrapper.async_wait_reqid()
         assert self.connector_worker is not None
         assert isinstance(self._connector_metadata, MoRIIOConnectorMetadata)
@@ -752,7 +759,7 @@ class MoRIIOConnectorScheduler:
         if delay_free_blocks:
             # Prefill request on remote. It will be read from D upon completion
             self._reqs_need_send[request.request_id] = time.perf_counter(
-            ) + envs.VLLM_MORIIO_ABORT_REQUEST_TIMEOUT
+            ) + envs.VLLM_NIXL_ABORT_REQUEST_TIMEOUT
 
         return delay_free_blocks, dict(
             do_remote_prefill=True,
@@ -781,9 +788,9 @@ class MoRIIOConnectorWorker:
         self.is_producer = self.kv_transfer_config.is_kv_producer
 
         if self.is_producer:
-            GLOBAL_ROLE = ROLE.PRODUCER
+            set_role(ROLE.PRODUCER)
         else:
-            GLOBAL_ROLE = ROLE.CONSUMER
+            set_role(ROLE.CONSUMER)
         # mori engine
         self._rank = get_world_group().rank
         self._local_rank = get_world_group().local_rank
@@ -880,8 +887,8 @@ class MoRIIOConnectorWorker:
             str, List[Any]]] = dict()
         self.slot_size_bytes = 0
 
-        self.load_kv_flag = False
-        self.write_kv_flag = {}
+        self.load_ready_flag = False
+        self.write_ready_flags = {}
         self.kv_cache_shape = None
         self.block_shape = None
         self.kv_element_size = 0
@@ -961,7 +968,7 @@ class MoRIIOConnectorWorker:
         # List of block window sizes for each layer for local attention
         self.block_window_per_layer: list[Optional[int]] = []
         self.use_mla = self.model_config.use_mla
-        self.builded_session = False
+        self.built_session = False
         self.builded_write_session: defaultdict[str, list] = defaultdict(list)
         self._write_session_lock = threading.Lock()
         self.debug_cache = []
@@ -1052,9 +1059,9 @@ class MoRIIOConnectorWorker:
 
             self._execute_write_task(task)
 
-    def _get_builded_session(self, remote_engine_id):
+    def _get_built_session(self, remote_engine_id):
         if remote_engine_id not in self.builded_write_session:
-            cur_remote_engine_sessiones = []
+            cur_remote_engine_sessions = []
             for ln, local_meta in self.layer_name_to_local_kv_cache_metadata.items(
             ):
 
@@ -1063,12 +1070,12 @@ class MoRIIOConnectorWorker:
                 unpcaked_remote_memory_meta = self.moriio_wrapper.get_unpack_memory_metadata(
                     self.layer_name_to_remote_kv_cache_metadata[
                         remote_engine_id][ln][0])
-                cur_remote_engine_sessiones.append(
+                cur_remote_engine_sessions.append(
                     self.moriio_wrapper.build_session(
                         unpcaked_local_memory_meta,
                         unpcaked_remote_memory_meta))
             self.builded_write_session[
-                remote_engine_id] = cur_remote_engine_sessiones
+                remote_engine_id] = cur_remote_engine_sessions
         return self.builded_write_session[remote_engine_id]
 
     def _execute_write_task(self, task: WriteTask):
@@ -1089,7 +1096,7 @@ class MoRIIOConnectorWorker:
         use_batch = True
         task.event.synchronize()
 
-        sessiones = self._get_builded_session(task.dst_engine_id)
+        sessions = self._get_built_session(task.dst_engine_id)
 
         stride = self.kv_caches[layer_name].stride()
         is_mla = (len(self.kv_cache_shape) == 3)
@@ -1142,7 +1149,7 @@ class MoRIIOConnectorWorker:
             a, b, c = request_info.transfer_offset
             if use_batch:
                 self.moriio_wrapper.write_remote_data(c, a, b,
-                                                      sessiones[sess_idx])
+                                                      sessions[sess_idx])
                 request_info.writes_done += 1
 
             else:
@@ -1356,8 +1363,8 @@ class MoRIIOConnectorWorker:
         # callback, we want to fail the request in this case.
         def request_ready(_f: Future[Any], entry=(req_id, meta)):
             self._ready_requests.put(entry)
-            self.load_kv_flag = True
-            self.write_kv_flag[remote_engine_id] = True
+            self.load_ready_flag = True
+            self.write_ready_flags[remote_engine_id] = True
 
         fut.add_done_callback(request_ready)
 
@@ -1580,10 +1587,10 @@ class MoRIIOConnectorWorker:
             self._write_blocks_for_req(req_id, meta, layer_name, kv_layer)
 
         while True:
-            if self._ready_requests.empty() and remote_engine_id not in self.write_kv_flag:
+            if self._ready_requests.empty() and remote_engine_id not in self.write_ready_flags:
                 continue
             elif not self._ready_requests.empty() and (remote_engine_id
-                                                       in self.write_kv_flag):
+                                                       in self.write_ready_flags):
                 self._write_blocks_for_req(*self._ready_requests.get_nowait(),
                                            layer_name, kv_layer)
                 break
@@ -1628,9 +1635,9 @@ class MoRIIOConnectorWorker:
 
         while True:  #TODO
             if self._ready_requests.empty(
-            ) and not self.load_kv_flag and wait_handshage_readd_req:
+            ) and not self.load_ready_flag and wait_handshage_readd_req:
                 continue
-            elif not self._ready_requests.empty() and self.load_kv_flag:
+            elif not self._ready_requests.empty() and self.load_ready_flag:
                 self._read_blocks_for_req(*self._ready_requests.get_nowait())
                 break
             else:
@@ -1759,7 +1766,7 @@ class MoRIIOConnectorWorker:
         if GLOBAL_MORIIO_MODE == MoRIIOMode.WRITE:
             return
 
-        sessiones = self._get_builded_session(dst_engine_id)
+        sessions = self._get_built_session(dst_engine_id)
         is_mla = (len(self.kv_cache_shape) == 3)
 
         a, b, c = [], [], []
@@ -1810,12 +1817,12 @@ class MoRIIOConnectorWorker:
             use_batch = True
             if use_batch:
                 self.moriio_wrapper.read_remote_data(c, a, b,
-                                                     sessiones[sess_idx])
+                                                     sessions[sess_idx])
             else:
                 for i in range(len(a)):
                     self.moriio_wrapper.read_remote_data([c[i]], [a[i]],
                                                          [b[i]],
-                                                         sessiones[sess_idx])
+                                                         sessions[sess_idx])
             self.moriio_wrapper.waiting_for_transfer_complete()
 
 
