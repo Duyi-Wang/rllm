@@ -522,10 +522,12 @@ class MoRIIOConnector(KVConnectorBase_V1):
                       attn_metadata: "AttentionMetadata", **kwargs) -> None:
 
         # Only producer/prefill saves KV Cache
-
-        self.connector_worker.save_kv_layer(self._connector_metadata,
-                                            layer_name, kv_layer,
-                                            attn_metadata, **kwargs)
+        try:
+            self.connector_worker.save_kv_layer(self._connector_metadata,
+                                                    layer_name, kv_layer,
+                                                    attn_metadata, **kwargs)
+        except Exception as e:
+            logger.info(f"MoRIIO save_kv_layer error: {e}")
         return None
 
     def wait_for_save(self):
