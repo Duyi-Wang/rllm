@@ -72,7 +72,7 @@ def aiter_mla_decode_fwd(
         kv_indptr,
         kv_indices,
         kv_last_page_lens,
-        1,
+        max_seqlen_q,
         sm_scale=sm_scale,
         logit_cap=logit_cap,
         num_kv_splits=num_kv_splits,
