@@ -10,10 +10,10 @@ import torch
 import torch.nn as nn
 
 from vllm.attention.layer import Attention
-from vllm.config import (CompilationLevel, VllmConfig,
+from vllm.config import (CompilationLevel, VllmConfig,CUDAGraphMode,
                          get_layers_from_vllm_config)
 from vllm.distributed.parallel_state import get_pp_group
-from vllm.forward_context import set_forward_context
+from vllm.forward_context import set_forward_context,BatchDescriptor
 from vllm.logger import init_logger
 from vllm.model_executor.model_loader import get_model
 from vllm.model_executor.models import supports_multimodal
@@ -81,9 +81,11 @@ class EagleProposer:
                                == CompilationLevel.PIECEWISE and
                                not self.vllm_config.model_config.enforce_eager
                                and not self.speculative_config.enforce_eager)
+        #logger.info(f"mtp graph = {self.use_cuda_graph}, {self.vllm_config.compilation_config.level}, {self.vllm_config.model_config.enforce_eager}, {self.speculative_config.enforce_eager}")
         self.cudagraph_batch_sizes = list(
             reversed(
                 self.vllm_config.compilation_config.cudagraph_capture_sizes))
+        #logger.info(f'mtp graph {self.cudagraph_batch_sizes}')
 
         # persistent buffers for cuda graph
         self.input_ids = torch.zeros(self.max_num_tokens,
@@ -166,6 +168,7 @@ class EagleProposer:
         common_attn_metadata: CommonAttentionMetadata,
         sampling_metadata: SamplingMetadata,
         mm_embeds: Optional[list[torch.Tensor]] = None,
+        cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE,
     ) -> torch.Tensor:
         num_tokens = target_token_ids.shape[0]
         batch_size = next_token_ids.shape[0]
@@ -232,8 +235,14 @@ class EagleProposer:
             inputs_embeds = None
             input_ids = self.input_ids[:num_input_tokens]
 
+        batch_descriptor = BatchDescriptor(num_tokens=num_input_tokens,
+                                           uniform_decode=True)
+
+        #logger.info(f"mtp graph {batch_descriptor}, {cudagraph_runtime_mode}")
         with set_forward_context(per_layer_attn_metadata,
                                  self.vllm_config,
+                                 cudagraph_runtime_mode=cudagraph_runtime_mode,
+                                 batch_descriptor=batch_descriptor,
                                  num_tokens=num_input_tokens):
             ret_hidden_states = self.model(
                 input_ids=input_ids,
@@ -905,10 +914,20 @@ class EagleProposer:
     @torch.inference_mode()
     def dummy_run(
         self,
-        num_tokens: int,
+        num_tokens,
+        attn_metadata,
+        num_tokens_across_dp,
+        cudagraph_runtime_mode,
+        batch_descriptor,
+        ubatch_slices
     ) -> None:
+        #logger.info(f"draft moddel dummy_run {batch_descriptor}, {cudagraph_runtime_mode}")
         with set_forward_context(None, self.vllm_config,
-                                 num_tokens=num_tokens):
+                                num_tokens=num_tokens,
+                                num_tokens_across_dp=num_tokens_across_dp,
+                                cudagraph_runtime_mode=cudagraph_runtime_mode,
+                                batch_descriptor=batch_descriptor,
+                                ubatch_slices=ubatch_slices):
             if self.is_multimodal_model:
                 input_ids = None
                 inputs_embeds = self.inputs_embeds[:num_tokens]
