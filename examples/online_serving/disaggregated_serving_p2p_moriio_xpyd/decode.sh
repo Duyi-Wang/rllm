@@ -38,7 +38,6 @@ PROXY_IP="10.158.215.60"
 vllm serve ${MODEL_PATH} \
         -tp 2   \
         --block-size 16  \
-        --max_seq_len_to_capture 6144 \
         --max-num-batched-tokens 6144 \
             --enforce-eager \
         --host 0.0.0.0 \
