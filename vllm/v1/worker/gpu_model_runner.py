@@ -2378,6 +2378,7 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
                     aux_hidden_states,
                     spec_decode_metadata,
                     spec_decode_common_attn_metadata,
+                    cudagraph_runtime_mode,
                 )
 
         use_padded_batch_for_eagle = self.speculative_config and \
@@ -2465,6 +2466,7 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
         aux_hidden_states: Optional[list[torch.Tensor]],
         spec_decode_metadata: Optional[SpecDecodeMetadata],
         common_attn_metadata: CommonAttentionMetadata,
+        cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE,
     ) -> Union[list[list[int]], torch.Tensor]:
 
         num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
@@ -2582,6 +2584,7 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
                 sampling_metadata=sampling_metadata,
                 common_attn_metadata=common_attn_metadata,
                 mm_embeds=mm_embeds,
+                cudagraph_runtime_mode=cudagraph_runtime_mode,
             )
         return draft_token_ids
 
@@ -2690,6 +2693,10 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
             and not self.parallel_config.enable_dbo:
             self.model = CUDAGraphWrapper(self.model,
                                           self.vllm_config,
+                                          runtime_mode=CUDAGraphMode.FULL)
+            if hasattr(self, "drafter"):
+                self.drafter.model = CUDAGraphWrapper(self.drafter.model,
+                                              self.vllm_config,
                                           runtime_mode=CUDAGraphMode.FULL)
         elif self.parallel_config.enable_dbo:
             if self.compilation_config.cudagraph_mode.has_full_cudagraphs():
@@ -3165,7 +3172,7 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
 
             if self.speculative_config and self.speculative_config.use_eagle():
                 assert isinstance(self.drafter, EagleProposer)
-                self.drafter.dummy_run(num_tokens)
+                self.drafter.dummy_run(num_tokens_after_padding, attn_metadata, num_tokens_across_dp, cudagraph_runtime_mode, batch_descriptor, ubatch_slices)
 
         # This is necessary to avoid blocking DP.
         # For dummy runs, we typically skip EPLB since we don't have any real
