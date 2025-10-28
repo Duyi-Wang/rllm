@@ -6,7 +6,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 from transformers import PretrainedConfig
-
+import logging
 from vllm.config import VllmConfig
 from vllm.model_executor.layers.fused_moe import FusedMoE
 from vllm.model_executor.layers.layernorm import RMSNorm
@@ -22,6 +22,12 @@ from .deepseek_v2 import (DeepseekV2DecoderLayer,
 from .interfaces import SupportsPP
 from .utils import maybe_prefix
 
+from vllm.model_executor.layers.fused_moe.rocm_aiter_fused_moe import (
+    is_rocm_aiter_fusion_shared_expert_enabled,
+    is_rocm_aiter_moe_enabled,
+)
+
+logging.getLogger(__name__)
 
 class SharedHead(nn.Module):
 
@@ -187,16 +193,24 @@ class DeepSeekMTP(nn.Module, SupportsPP):
             ckpt_gate_proj_name="gate_proj",
             ckpt_down_proj_name="down_proj",
             ckpt_up_proj_name="up_proj",
-            num_experts=self.config.n_routed_experts)
+            num_experts=self.config.n_routed_experts
+            + (self.config.n_shared_experts if is_rocm_aiter_fusion_shared_expert_enabled() else 0), num_redundant_experts=0,)
 
         params_dict = dict(self.named_parameters())
         loaded_params: set[str] = set()
+        logging.info(params_dict.keys())
         for name, loaded_weight in weights:
             if "rotary_emb.inv_freq" in name:
                 continue
             spec_layer = get_spec_layer_idx_from_weight_name(self.config, name)
             if spec_layer is None:
                 continue
+
+            is_fuse_shared_experts_layer = (
+                is_rocm_aiter_fusion_shared_expert_enabled()
+                and ("mlp.shared_experts" in name)
+            )
+
             name = self._rewrite_spec_layer_name(spec_layer, name)
             for (param_name, weight_name, shard_id) in stacked_params_mapping:
                 # Skip non-stacked layers and experts (experts handled below).
@@ -210,6 +224,10 @@ class DeepSeekMTP(nn.Module, SupportsPP):
                 # for mlp.experts[0].gate_gate_up_proj, which breaks load.
                 if (("mlp.experts." in name) and name not in params_dict):
                     continue
+
+                if is_fuse_shared_experts_layer:
+                    continue
+
                 name_mapped = name.replace(weight_name, param_name)
 
                 # QKV fusion is optional, fall back to normal
@@ -229,35 +247,80 @@ class DeepSeekMTP(nn.Module, SupportsPP):
                 weight_loader(param, loaded_weight, shard_id)
                 break
             else:
-                for mapping in expert_params_mapping:
-                    param_name, weight_name, expert_id, shard_id = mapping
-                    if weight_name not in name:
-                        continue
-                    name = name.replace(weight_name, param_name)
+                num_chunks = 1
+                is_expert_weight = False
 
-                    param = params_dict[name]
-                    weight_loader = param.weight_loader
-                    weight_loader(param,
-                                  loaded_weight,
-                                  name,
-                                  shard_id=shard_id,
-                                  expert_id=expert_id)
-                    break
-                else:
-                    # Skip loading extra bias for GPTQ models.
-                    if name.endswith(".bias") and name not in params_dict:
-                        continue
+                if is_fuse_shared_experts_layer:
+                    num_chunks = getattr(self.config, "n_shared_experts", 1) or 1
+                    # Determine split axis based on op type
+                    # gate/up: ColumnParallel → split along dim 0
+                    # down: RowParallel → split along dim 1
+                    split_dim = 1 if "down_proj.weight" in name else 0
+                    total = loaded_weight.shape[split_dim]
+                    assert total % num_chunks == 0, (
+                        f"Shared expert weight dim {total} "
+                        f"not divisible by num_chunks {num_chunks}"
+                    )
+                    chunk_size = total // num_chunks
 
-                    # According to DeepSeek-V3 Technical Report, MTP modules
-                    # shares embedding layer. We only load the first weights.
-                    if (spec_layer != self.model.mtp_start_layer_idx
-                            and ".layers" not in name):
-                        continue
 
-                    param = params_dict[name]
-                    weight_loader = getattr(param, "weight_loader",
-                                            default_weight_loader)
-                    weight_loader(param, loaded_weight)
+                for j in range(num_chunks):
+                    chunk_name = name
+                    weight_to_load = loaded_weight
+
+                    if is_fuse_shared_experts_layer:
+                        if split_dim == 0:
+                            weight_to_load = loaded_weight[
+                                j * chunk_size : (j + 1) * chunk_size, :
+                            ]
+                        else:
+                            weight_to_load = loaded_weight[
+                                :, j * chunk_size : (j + 1) * chunk_size
+                            ]
+                        # Synthesize an expert-style name so expert mapping
+                        # can route it
+                        chunk_name = name.replace(
+                            "mlp.shared_experts",
+                            f"mlp.experts.{self.config.n_routed_experts + j}",
+                        )
+
+                    for mapping in expert_params_mapping:
+                        param_name, weight_name, expert_id, shard_id = mapping
+                        if weight_name not in chunk_name:
+                            continue
+
+                        is_expert_weight = True
+                        name = chunk_name.replace(weight_name, param_name)
+
+                        param = params_dict[name]
+                        weight_loader = param.weight_loader
+                        weight_loader(param,
+                                      loaded_weight,
+                                      name,
+                                      shard_id=shard_id,
+                                      expert_id=expert_id)
+                        break
+                    else:
+                        if is_expert_weight:
+                            # We've checked that this is an expert weight
+                            # However it's not mapped locally to this rank
+                            # So we simply skip it
+                            continue
+
+                        # Skip loading extra bias for GPTQ models.
+                        if name.endswith(".bias") and name not in params_dict:
+                            continue
+
+                        # According to DeepSeek-V3 Technical Report, MTP modules
+                        # shares embedding layer. We only load the first weights.
+                        if (spec_layer != self.model.mtp_start_layer_idx
+                                and ".layers" not in name):
+                            continue
+
+                        param = params_dict[name]
+                        weight_loader = getattr(param, "weight_loader",
+                                                default_weight_loader)
+                        weight_loader(param, loaded_weight)
             loaded_params.add(name)
         return loaded_params
 
