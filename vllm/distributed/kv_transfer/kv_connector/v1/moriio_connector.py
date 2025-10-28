@@ -983,11 +983,10 @@ class MoRIIOConnectorWorker:
                                    self.model_config.dtype,
                                    self.cache_config.cache_dtype,
                                    self.block_size,
-                                   self.model_config.is_attention_free,
                                    use_mla=self.use_mla)
         self.backend_name = backend.get_name()
         attn_backend = backend_name_to_enum(self.backend_name)
-        self._use_flashinfer = attn_backend == _Backend.FLASHINFER_VLLM_V1
+        self._use_flashinfer = attn_backend == _Backend.FLASHINFER
         logger.debug("Detected attention backend %s", self.backend_name)
 
         self._tp_size: dict[EngineId, int] = {self.engine_id: self.world_size}
