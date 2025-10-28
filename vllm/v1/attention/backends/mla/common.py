@@ -1847,10 +1847,9 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
                 envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT
                 and kv_cache.numel() > 0
             ):
-                if kv_cache.dtype == torch.bfloat16:
-                    output_q_nope_zeros = True
-                else:
-                    output_q_nope_zeros = False
+                output_q_nope_zeros = False
+                q_nope_zeros = None
+                if kv_cache.dtype != torch.bfloat16:
                     kv_cache = kv_cache.view(torch.float8_e4m3fnuz)
                     
                 # Use the transpose back to (B, N, P) for the fused kernel

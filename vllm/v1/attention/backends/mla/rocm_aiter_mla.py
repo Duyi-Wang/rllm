@@ -327,10 +327,10 @@ class AiterMLAImpl(MLACommonImpl[AiterMLAMetadata]):
         assert attn_metadata.decode is not None
         
         if envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT and q_nope_pe is not None:
+            q = q_nope_pe
             if q_nope_zeros is not None:
-                q, o = q_nope_pe, q_nope_zeros
+                o = q_nope_zeros
             else:
-                q = q_nope_pe
                 B = q.shape[0]
                 o = torch.empty(B,
                                 self.num_heads,
