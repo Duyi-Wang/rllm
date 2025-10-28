@@ -79,8 +79,10 @@ class AiterMLAMetadata(MLACommonMetadata[AiterMLADecodeMetadata]):
 class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
     # TODO(luka, lucas): audit this as part of:
     #  https://github.com/vllm-project/vllm/issues/22945
+    #cudagraph_support: ClassVar[AttentionCGSupport] = \
+    #    AttentionCGSupport.UNIFORM_SINGLE_TOKEN_DECODE
     cudagraph_support: ClassVar[AttentionCGSupport] = \
-        AttentionCGSupport.UNIFORM_SINGLE_TOKEN_DECODE
+        AttentionCGSupport.UNIFORM_BATCH
 
     def __init__(self, kv_cache_spec: AttentionSpec, layer_names: list[str],
                  vllm_config: VllmConfig, device: torch.device):
@@ -95,6 +97,17 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
                                      self.kv_cache_spec.block_size)
         max_num_reqs = vllm_config.scheduler_config.max_num_seqs
         max_num_pages = max_num_reqs * max_num_pages_per_req
+
+
+        self.speculative_config = vllm_config.speculative_config
+
+        if self.speculative_config:
+            self.num_spec = self.speculative_config.num_speculative_tokens  # noqa: E501
+        else:
+            self.num_spec = 0
+        self.use_spec_decode = self.num_spec > 0
+
+        self._init_reorder_batch_threshold(1, self.use_spec_decode)
 
         # Preparing persistent buffers
         # TODO: we can disambiguate between decode and mixed-prefill decode here
@@ -231,7 +244,6 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
         )
 
 
-
         attn_metadata = AiterMLADecodeMetadata(
             block_table=block_table_tensor,
             seq_lens=seq_lens_device,
@@ -246,6 +258,7 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
             reduce_final_map=self.reduce_final_map,
             reduce_partial_map=self.reduce_partial_map,
             qo_indptr=qo_indptr)
+        
 
         return attn_metadata
 
@@ -326,7 +339,7 @@ class AiterMLAImpl(MLACommonImpl[AiterMLAMetadata]):
 
         # max_seqlen_qo must be 1 except for MTP
         # TODO: Find the best value for MTP
-        max_seqlen_qo = 1
+        max_seqlen_qo = 2
 
         q_scale_input = None
         if hasattr(layer, '_q_scale_float') and layer._q_scale_float != 1.0:
