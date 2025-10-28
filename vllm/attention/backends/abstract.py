@@ -180,6 +180,9 @@ class AttentionImpl(ABC, Generic[T]):
         :return: is fusion supported for this type of quantization
         """
         return False
+    
+    def set_input_positions(self, positions: torch.Tensor):
+        pass
 
 
 class MLAAttentionImpl(AttentionImpl[T], Generic[T]):

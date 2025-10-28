@@ -377,6 +377,9 @@ class Attention(nn.Module, AttentionLayerBase):
 
     def get_attn_backend(self) -> type[AttentionBackend]:
         return self.attn_backend
+    
+    def set_input_positions(self, positions: torch.Tensor):
+        self.impl.set_input_positions(positions)
 
 
 class MultiHeadAttention(nn.Module):

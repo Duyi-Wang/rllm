@@ -9,6 +9,7 @@ from vllm.attention import Attention
 from vllm.config import CacheConfig
 from vllm.model_executor.custom_op import CustomOp
 from vllm.model_executor.layers.quantization import QuantizationConfig
+import vllm.envs as envs
 
 
 @dataclass
@@ -86,6 +87,8 @@ class MultiHeadLatentAttention(CustomOp):
             assert hasattr(self.indexer, "topk_tokens")
             self.topk_tokens = self.indexer.topk_tokens
             self.topk_indices_buffer = mla_modules.topk_indices_buffer
+            
+        cos_cache, sin_cache = self.rotary_emb.cos_sin_cache.chunk(2, dim=-1)
 
         # In the MLA backend, kv_cache includes both k_c and
         # pe (i.e. decoupled position embeddings). In particular,
@@ -112,6 +115,9 @@ class MultiHeadLatentAttention(CustomOp):
             v_head_dim=self.v_head_dim,
             kv_b_proj=self.kv_b_proj,
             indexer=self.indexer,
+            cos_cache=cos_cache,
+            sin_cache=sin_cache,
+            is_neox_style=self.rotary_emb.is_neox_style
         )
 
         self.prefix = prefix
@@ -154,8 +160,12 @@ class MultiHeadLatentAttention(CustomOp):
         # Add head dim of 1 to k_pe
         k_pe = k_pe.unsqueeze(1)
 
-        q[..., self.qk_nope_head_dim:], k_pe = self.rotary_emb(
-            positions, q[..., self.qk_nope_head_dim:], k_pe)
+        if envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT:
+            # the rope operator for decode is now fused with concat_and_cache_mla operator using fused_qk_rope_cat_and_cache_mla
+            self.mla_attn.set_input_positions(positions)
+        else:
+            q[..., self.qk_nope_head_dim:], k_pe = self.rotary_emb(
+                positions, q[..., self.qk_nope_head_dim:], k_pe)
 
         if self.indexer and self.is_sparse:
             _topk_indices = self.indexer(hidden_states, q_c, positions,
