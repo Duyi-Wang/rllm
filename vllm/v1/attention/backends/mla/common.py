@@ -1804,10 +1804,10 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
 
         if has_decode:
             assert attn_metadata.decode is not None
-            decode_q_nope, decode_q_pe = decode_q.split(
+            decode_q_nope_original, decode_q_pe = decode_q.split(
                 [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
             # Convert from (B, N, P) to (N, B, P)
-            decode_q_nope = decode_q_nope.transpose(0, 1)
+            decode_q_nope = decode_q_nope_original.transpose(0, 1)
 
             # Handle fused kernel logic now that decode_q_nope and decode_q_pe are defined
             if (
@@ -1821,7 +1821,7 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
                     kv_cache = kv_cache.view(torch.float8_e4m3fnuz)
                     
                 # Use the transpose back to (B, N, P) for the fused kernel
-                decode_q_nope_original = decode_q_nope.transpose(0, 1)
+                # decode_q_nope_original = decode_q_nope.transpose(0, 1)
                 q_nope_pe = fused_qk_rope_cat_and_cache_mla(
                     decode_q_nope_original,
                     decode_q_pe,
