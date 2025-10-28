@@ -1189,8 +1189,8 @@ class MLACommonBaseImpl(MLAAttentionImpl[A], Generic[A]):
             out.resize_((B, N * V))
             out.copy_(out_new)  # Copy result
 
-        def set_input_positions(self, positions: torch.Tensor):
-            self.positions = positions
+    def set_input_positions(self, positions: torch.Tensor):
+        self.positions = positions
 
 
 class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
@@ -1804,41 +1804,10 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
 
         if has_decode:
             assert attn_metadata.decode is not None
-            decode_q_nope_original, decode_q_pe = decode_q.split(
+            decode_q_nope, decode_q_pe = decode_q.split(
                 [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
             # Convert from (B, N, P) to (N, B, P)
-            decode_q_nope = decode_q_nope_original.transpose(0, 1)
-
-            # Handle fused kernel logic now that decode_q_nope and decode_q_pe are defined
-            if (
-                envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT
-                and kv_cache.numel() > 0
-            ):
-                if kv_cache.dtype == torch.bfloat16:
-                    output_q_nope_zeros = True
-                else:
-                    output_q_nope_zeros = False
-                    kv_cache = kv_cache.view(torch.float8_e4m3fnuz)
-                    
-                # Use the transpose back to (B, N, P) for the fused kernel
-                # decode_q_nope_original = decode_q_nope.transpose(0, 1)
-                q_nope_pe = fused_qk_rope_cat_and_cache_mla(
-                    decode_q_nope_original,
-                    decode_q_pe,
-                    k_c_normed[:num_decode_tokens].unsqueeze(1),
-                    k_pe[:num_decode_tokens],
-                    kv_cache,
-                    attn_metadata.slot_mapping.flatten(),
-                    self.positions,
-                    self.cos_cache,
-                    self.sin_cache,
-                    layer._k_scale,
-                    self.is_neox_style,
-                    output_q_nope_zeros=output_q_nope_zeros,
-                    q_out_dtype=kv_cache.dtype,
-                )
-                if output_q_nope_zeros == True:
-                    q_nope_pe, q_nope_zeros = q_nope_pe
+            decode_q_nope = decode_q_nope.transpose(0, 1)
 
             # Pads the head_dim if necessary (for the underlying kernel)
             if self.q_pad_num_heads is not None:
@@ -1872,6 +1841,37 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
                 torch.bmm(decode_q_nope, self.W_UK_T, out=decode_ql_nope)
                 # Convert from (N, B, L) to (B, N, L)
                 decode_ql_nope = decode_ql_nope.transpose(0, 1)
+
+            # Handle fused kernel logic now that decode_q_nope and decode_q_pe are defined
+            if (
+                envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT
+                and kv_cache.numel() > 0
+            ):
+                if kv_cache.dtype == torch.bfloat16:
+                    output_q_nope_zeros = True
+                else:
+                    output_q_nope_zeros = False
+                    kv_cache = kv_cache.view(torch.float8_e4m3fnuz)
+                    
+                # Use the transpose back to (B, N, P) for the fused kernel
+                # decode_q_nope_original = decode_q_nope.transpose(0, 1)
+                q_nope_pe = fused_qk_rope_cat_and_cache_mla(
+                    decode_ql_nope,
+                    decode_q_pe,
+                    k_c_normed[:num_decode_tokens].unsqueeze(1),
+                    k_pe[:num_decode_tokens],
+                    kv_cache,
+                    attn_metadata.slot_mapping.flatten(),
+                    self.positions,
+                    self.cos_cache,
+                    self.sin_cache,
+                    layer._k_scale,
+                    self.is_neox_style,
+                    output_q_nope_zeros=output_q_nope_zeros,
+                    q_out_dtype=kv_cache.dtype,
+                )
+                if output_q_nope_zeros == True:
+                    q_nope_pe, q_nope_zeros = q_nope_pe
 
             if fp8_attention:
                 ql_nope_shape = decode_ql_nope.shape
