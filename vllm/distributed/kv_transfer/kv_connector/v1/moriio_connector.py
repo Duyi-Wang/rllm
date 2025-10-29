@@ -287,10 +287,13 @@ class MoRIIOWrapper:
         self.notify_thread.start()
 
     def _handle_message(self, msg: bytes):
+        handled = False
         try:
             data = msgpack.loads(msg)
             if isinstance(data, dict) and "req_id" in data:
                 self._handle_structured_message(data)
+                handled = True
+
                 return
         except (msgpack.exceptions.ExtraData,
                 msgpack.exceptions.UnpackException):
@@ -300,12 +303,15 @@ class MoRIIOWrapper:
             msg_str = msg.decode("UTF-8")
             if msg_str.startswith("cmpl"):
                 self._handle_completion_message(msg_str)
+                handled = True
         except UnicodeDecodeError:
             logger.warning(f"Received non-UTF8 message: {msg}")
+        assert handled, f"Unhandled message format: {msg}"
 
     def _handle_structured_message(self, data: dict):
         req_id = data["req_id"]
         int_list = data.get("int_list", [])
+        assert len(int_list) > 0, "int_list cannot be empty in remote allocate message"
         msg_type = data.get("type", "unknown")
 
         with self.lock:
