@@ -1610,7 +1610,7 @@ class MoRIIOConnectorWorker:
             return
         if GLOBAL_MORIIO_MODE == MoRIIOMode.READ:
             return
-
+        remote_engine_id = None
         for req_id, meta in metadata.reqs_to_save.items():
             remote_engine_id = meta.remote_engine_id
             remote_engine_id = str(meta.remote_host) + ":" + str(
@@ -1632,6 +1632,8 @@ class MoRIIOConnectorWorker:
             self._write_blocks_for_req(req_id, meta, layer_name, kv_layer)
 
         while True:
+            if remote_engine_id is None:
+                break
             if self._ready_requests.empty() and remote_engine_id not in self.write_ready_flags:
                 continue
             elif not self._ready_requests.empty() and (remote_engine_id

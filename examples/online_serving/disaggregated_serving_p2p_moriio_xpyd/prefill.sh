@@ -45,7 +45,7 @@ PROXY_IP="10.158.215.60"
     --gpu-memory-utilization 0.6 \
     --disable-log-request \
     --served-model-name QWEN \
-    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_producer","kv_port":"21001","kv_connector_extra_config":{"proxy_ip":"'"${PROXY_IP}"'","proxy_port":30001,"proxy_ping_port":"36367","local_ping_port":"7777","http_port":"20005","handshake_port":60000,"notify_port":49657}}'
+    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_producer","kv_port":"5041","kv_connector_extra_config":{"proxy_ip":"'"${PROXY_IP}"'","proxy_port":30001,"proxy_ping_port":"36367","local_ping_port":"7777","http_port":"20005","handshake_port":8657,"notify_port":9657}}'
            
            
 #           "--kv-transfer-config={\"kv_connector\":\"MoRIIOConnector\",\"kv_role\":\"kv_producer\",\"kv_port\":\"21001\",\"kv_connector_extra_config\":{\"proxy_ip\":\"127.0.0.1\",\"proxy_port\":\"30001\",\"proxy_ping_port\":\"36367\",\"local_ping_port\":\"7777\",\"http_port\":\"20005\",\"handshake_port\":60000,\"notify_port\":49856}}"        ],
