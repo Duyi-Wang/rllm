@@ -30,7 +30,7 @@ export SAFETENSORS_FAST_GPU=1
 export VLLM_TORCH_PROFILER_DIR=/nfs/users/mingzliu/vllm/examples/online_serving/disaggregated_serving_p2p_moriio_xpyd/write_0929
 export CUDA_PROFILE_ACTIVITIES="cuda"
 MODEL_PATH=/shared-inference/models_blog/Qwen3-0.6B
-PROXY_IP="10.224.3.45"
+PROXY_IP="10.158.214.178"
 # /apps/data/models/models--Qwen--Qwen3-0.6B/snapshots/e6de91484c29aa9480d55605af694f39b081c455
 # {
  vllm serve  ${MODEL_PATH} \
@@ -44,7 +44,7 @@ PROXY_IP="10.224.3.45"
     --gpu-memory-utilization 0.6 \
     --disable-log-request \
     --served-model-name QWEN \
-    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_producer","kv_port":"21001","kv_connector_extra_config":{"proxy_ip":"'"${PROXY_IP}"'","proxy_port":30001,"proxy_ping_port":"36367","local_ping_port":"7777","http_port":"20005","handshake_port":60000,"notify_port":49657}}'
+    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_producer","kv_port":"5041","kv_connector_extra_config":{"proxy_ip":"'"${PROXY_IP}"'","proxy_port":30001,"proxy_ping_port":"36367","local_ping_port":"7777","http_port":"20005","handshake_port":8657,"notify_port":9657}}'
            
            
 #           "--kv-transfer-config={\"kv_connector\":\"MoRIIOConnector\",\"kv_role\":\"kv_producer\",\"kv_port\":\"21001\",\"kv_connector_extra_config\":{\"proxy_ip\":\"127.0.0.1\",\"proxy_port\":\"30001\",\"proxy_ping_port\":\"36367\",\"local_ping_port\":\"7777\",\"http_port\":\"20005\",\"handshake_port\":60000,\"notify_port\":49856}}"        ],

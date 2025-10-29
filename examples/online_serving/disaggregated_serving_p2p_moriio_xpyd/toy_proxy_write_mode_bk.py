@@ -45,6 +45,7 @@ def _append_whole_dict_unique(target_list, data_dict):
         existed_filtered = {k: v for k, v in existed.items() if k != "index"}
         if existed_filtered == new_filtered:
             return False
+    print("!!APPEND!!", data_dict)
     target_list.append(data_dict)
 _list_lock = threading.Lock()
 
@@ -119,7 +120,7 @@ async def send_request_to_prefill(endpoint,req_data,request_id,p_endpoint,pip,pp
     if "stream_options" in req_data_copy:
         del req_data_copy["stream_options"]
     # print(f"zovlog ========================== send response to prefill {req_data_copy}")
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6 * 60 * 60)) as session:
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6 * 6000 * 6000)) as session:
         headers = {
             "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}",
             "X-Request-Id": request_id
@@ -133,7 +134,7 @@ async def send_request_to_prefill(endpoint,req_data,request_id,p_endpoint,pip,pp
                 raise RuntimeError("send_request_to_prefill response.status != 200,response.statuus = ",response.status)
 async def start_decode_request(endpoint, req_data, request_id):
     """立即启动请求，返回响应对象"""
-    session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6 * 60 * 60))
+    session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6 * 6000 * 6000))
     headers = {
         "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}",
         "X-Request-Id": request_id
@@ -158,7 +159,7 @@ async def stream_decode_response(session, response, request_id):
 # to debug
 async def send_request_to_decode(endpoint,req_data,request_id):
     # print(f"zovlog ========================== send response to decode {request_id}")
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6 * 60 * 60)) as session:
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6 * 6000 * 6000)) as session:
         headers = {
             "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}",
             "X-Request-Id": request_id
@@ -214,8 +215,12 @@ async def handle_request():
         
         else:
             # assert False, f"prefill_instances or decode_instances not ready,"
-            prefill_instance_endpoint = prefill_instances[request_nums % len(prefill_instances)]
-            decode_instance_endpoint = decode_instances[request_nums % len(decode_instances)]
+            pid=request_nums % len(prefill_instances)
+            did=request_nums % len(decode_instances)
+            prefill_instance_endpoint = prefill_instances[pid]
+            decode_instance_endpoint = decode_instances[did]
+            print(f"P:{pid},D:{did}")
+
         # print(f"{prefill_instances=},{decode_instances=}")
         # print(f"******{request_id}******,******{prefill_instance_endpoint=}, {decode_instance_endpoint=}, {request_nums=}")
         dip,dport= extract_ip_port_fast(decode_instance_endpoint['request_address'])
@@ -283,7 +288,7 @@ async def send_profile_cmd(req_data, profiler_cmd):
         "X-Request-Id": str(uuid.uuid4())
     }
 
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6 * 60 * 60)) as session:
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6 * 6000 * 6000)) as session:
         # 发送到prefill
         prefill_response = await session.post(
             f"http://0.0.0.0:20005/{profiler_cmd}_profile",
@@ -356,8 +361,8 @@ async def stop_profile():
 if __name__ == '__main__':
     t = start_service_discovery("0.0.0.0", 36367)
     app.debug = True 
-    app.config['BODY_TIMEOUT'] = 3600
-    app.config['RESPONSE_TIMEOUT'] = 3600
+    app.config['BODY_TIMEOUT'] = 360000
+    app.config['RESPONSE_TIMEOUT'] = 360000
 
     app.run(host="0.0.0.0", port=10001)
     t.join()
