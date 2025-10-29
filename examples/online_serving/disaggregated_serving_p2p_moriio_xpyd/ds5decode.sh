@@ -33,7 +33,7 @@ export CUDA_PROFILE_ACTIVITIES="cuda"
 # {
 
 # MODEL_PATH=/nfs/DeepSeekV3tiny
-MODEL_PATH=/shared-inference/models_blog/DeepSeek-V3
+MODEL_PATH=/mnt/m2m_nobackup/models/deepseek-ai/DeepSeek-V3
 # MODEL_PATH=/shared-inference/models_blog/DeepSeek-V3-5layer
 
 # MODEL_PATH=/nfs/DeepSeek-V3
@@ -48,11 +48,12 @@ vllm serve $MODEL_PATH \
     --trust-remote-code \
     --host 0.0.0.0 \
     --port 40005 \
-    --enforce-eager \
     --disable-log-request \
+    --enforce-eager \
     --served-model-name QWEN \
-    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_consumer","kv_port":"32988","kv_connector_extra_config":{"proxy_ip":"10.158.215.60","proxy_port":"30001","http_port":"40005","local_ping_port":"32567","proxy_ping_port":"36367","handshake_port":61700,"notify_port":61800}}'
-        
+    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_consumer","kv_port":"32988","kv_connector_extra_config":{"proxy_ip":"10.158.214.178","proxy_port":"30001","http_port":"40005","local_ping_port":"3567","proxy_ping_port":"36367","handshake_port":5700,"notify_port":7800}}'
+        #     --enforce-eager \
+
                 #  "--kv-transfer-config={\"kv_connector\":\"MoRIIOConnector\",\"kv_role\":\"kv_consumer\",\"kv_port\":\"32988\",\"kv_connector_extra_config\":{\"proxy_ip\":\"127.0.0.1\",\"proxy_port\":\"30001\",\"http_port\":\"40005\",\"local_ping_port\":\"32567\",\"proxy_ping_port\":\"36367\",\"handshake_port\":60020,\"notify_port\":49657}}"      
 
         

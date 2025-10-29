@@ -45,6 +45,7 @@ def _append_whole_dict_unique(target_list, data_dict):
         existed_filtered = {k: v for k, v in existed.items() if k != "index"}
         if existed_filtered == new_filtered:
             return False
+    print("!!APPEND!!", data_dict)
     target_list.append(data_dict)
 _list_lock = threading.Lock()
 

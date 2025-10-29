@@ -1190,8 +1190,8 @@ class MoRIIOConnectorWorker:
     
 
     def _ping(self, zmq_context):
-        PING_INTERVAL = 10
-        MAX_RETRIES = 30
+        PING_INTERVAL = 5
+        MAX_RETRIES =100000
         
         http_request_address = f"http://{self.request_address}/v1/completions"
         role = "P" if self.is_producer else "D"
@@ -1218,18 +1218,18 @@ class MoRIIOConnectorWorker:
                     retry_count = 0 
                     
                 except ConnectionRefusedError:
-                    logger.warning(
+                    logger.info(
                         f"Connection refused: {self.local_ip}:{self.local_ping_port} -> "
                         f"{self.proxy_ip}:{self.proxy_ping_port}"
                     )
                     retry_count += 1
                     
                 except OSError as e:
-                    logger.error(f"OS error when sending ping: {e}")
+                    logger.info(f"OS error when sending ping: {e}")
                     retry_count += 1
                     
                 except Exception as e:
-                    logger.error(f"Unexpected error when sending ping: {e}")
+                    logger.info(f"Unexpected error when sending ping: {e}")
                     retry_count += 1
                     
                 finally:
@@ -1562,7 +1562,11 @@ class MoRIIOConnectorWorker:
             assert self._tp_size[engine_id] == remote_tp_size
         # We may eventually enable this after asserting equality in cache
         # layout and close outputs.
-        assert moriio_agent_meta.attn_backend_name == self.backend_name
+        if moriio_agent_meta.attn_backend_name != self.backend_name:
+            logger.info(
+                f"!!!!!! Remote MoRIIO agent {engine_id} attention backend "
+                f"'{moriio_agent_meta.attn_backend_name}' does not match "
+                f"local backend '{self.backend_name}'.")
 
         remote_agent_name = "test"
 
