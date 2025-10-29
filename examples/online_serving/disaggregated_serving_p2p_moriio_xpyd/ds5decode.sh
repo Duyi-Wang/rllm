@@ -21,17 +21,17 @@ export NCCL_SOCKET_IFNAME=eth0
 # export VLLM_RPC_TIMEOUT=1800000 
 # export IBV_DRIVERS_LOG_LEVEL=4
 
-
+export VLLM_ROCM_USE_AITER_MLA=1
+export VLLM_ROCM_USE_AITER_MOE=1
+export VLLM_LOGGING_LEVEL=INFO
 
 export VLLM_USE_V1=1 
 export VLLM_ROCM_USE_AITER=1 
-export VLLM_ENABLE_DSV3=1
 export SAFETENSORS_FAST_GPU=1   
-export VLLM_TORCH_PROFILER_DIR=/nfs/users/mingzliu/vllm/examples/online_serving/disaggregated_serving_p2p_moriio_xpyd/write_0929
+# export VLLM_TORCH_PROFILER_DIR=/nfs/users/mingzliu/vllm/examples/online_serving/disaggregated_serving_p2p_moriio_xpyd/write_0929
 export CUDA_PROFILE_ACTIVITIES="cuda"
 # export VLLM_TORCH_PROFILER_WITH_STACK=0
 # {
-PROXY_IP="10.158.215.60"
 
 # MODEL_PATH=/nfs/DeepSeekV3tiny
 MODEL_PATH=/mnt/m2m_nobackup/models/deepseek-ai/DeepSeek-V3
@@ -50,6 +50,7 @@ vllm serve $MODEL_PATH \
     --max-num-seqs 128 \
     --cuda-graph-sizes 128\
     --trust-remote-code \
+    --kv-cache-dtype fp8 \
     --host 0.0.0.0 \
     --port 40005 \
     --disable-log-request \
