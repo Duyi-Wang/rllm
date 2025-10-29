@@ -39,7 +39,7 @@ vllm serve ${MODEL_PATH} \
         -tp 2   \
         --block-size 16  \
         --max-num-batched-tokens 6144 \
-            --enforce-eager \
+        --enforce-eager \
         --host 0.0.0.0 \
         --port 40005 \
         --trust-remote-code \

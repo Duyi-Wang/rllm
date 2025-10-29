@@ -29,8 +29,10 @@ export SAFETENSORS_FAST_GPU=1
 export VLLM_TORCH_PROFILER_DIR=/nfs/users/mingzliu/vllm/examples/online_serving/disaggregated_serving_p2p_moriio_xpyd/write_0929
 export CUDA_PROFILE_ACTIVITIES="cuda"
 # MODEL_PATH=/nfs/DeepSeekV3tiny
-# MODEL_PATH=/shared-inference/models_blog/DeepSeek-V3-5layer
-MODEL_PATH=/shared-inference/models_blog/DeepSeek-V3
+MODEL_PATH=/shared-inference/models_blog/DeepSeek-V3-5layer
+# MODEL_PATH=/shared-inference/models_blog/DeepSeek-V3
+PROXY_IP="10.158.214.178"
+
 # MODEL_PATH=/nfs/DeepSeek-V3
 # /apps/data/models/models--Qwen--Qwen3-0.6B/snapshots/e6de91484c29aa9480d55605af694f39b081c455
 # {
@@ -38,7 +40,6 @@ MODEL_PATH=/shared-inference/models_blog/DeepSeek-V3
     -tp 8 \
     --block-size 1 \
     --max-num-batched-tokens 8192 \
-    --no-enable-prefix-caching \
     --max-model-len 8192 \
     --max-num-seqs 2048 \
     --trust-remote-code \
@@ -47,7 +48,7 @@ MODEL_PATH=/shared-inference/models_blog/DeepSeek-V3
     --enforce-eager \
     --disable-log-request \
     --served-model-name QWEN \
-    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_producer","kv_port":"21001","kv_connector_extra_config":{"proxy_ip":"10.224.2.178","proxy_port":"30001","proxy_ping_port":"36367","local_ping_port":"7777","http_port":"20005","handshake_port":61300,"notify_port":61800}}'
+    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_producer","kv_port":"21001","kv_connector_extra_config":{"proxy_ip":"'"${PROXY_IP}"'","proxy_port":"30001","proxy_ping_port":"36367","local_ping_port":"7777","http_port":"20005","handshake_port":61300,"notify_port":61800}}'
            
            
 #           "--kv-transfer-config={\"kv_connector\":\"MoRIIOConnector\",\"kv_role\":\"kv_producer\",\"kv_port\":\"21001\",\"kv_connector_extra_config\":{\"proxy_ip\":\"127.0.0.1\",\"proxy_port\":\"30001\",\"proxy_ping_port\":\"36367\",\"local_ping_port\":\"7777\",\"http_port\":\"20005\",\"handshake_port\":60000,\"notify_port\":49856}}"        ],

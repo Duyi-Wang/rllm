@@ -31,10 +31,11 @@ export VLLM_TORCH_PROFILER_DIR=/nfs/users/mingzliu/vllm/examples/online_serving/
 export CUDA_PROFILE_ACTIVITIES="cuda"
 # export VLLM_TORCH_PROFILER_WITH_STACK=0
 # {
+PROXY_IP="10.158.215.60"
 
 # MODEL_PATH=/nfs/DeepSeekV3tiny
-MODEL_PATH=/shared-inference/models_blog/DeepSeek-V3
-# MODEL_PATH=/shared-inference/models_blog/DeepSeek-V3-5layer
+# MODEL_PATH=/shared-inference/models_blog/DeepSeek-V3
+MODEL_PATH=/shared-inference/models_blog/DeepSeek-V3-5layer
 
 # MODEL_PATH=/nfs/DeepSeek-V3
 
@@ -42,7 +43,6 @@ vllm serve $MODEL_PATH \
     -tp 8  \
     --block-size 1 \
     --max-num-batched-tokens 8192 \
-    --no-enable-prefix-caching \
     --max-model-len 8192 \
     --max-num-seqs 2048 \
     --trust-remote-code \
@@ -51,7 +51,7 @@ vllm serve $MODEL_PATH \
     --enforce-eager \
     --disable-log-request \
     --served-model-name QWEN \
-    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_consumer","kv_port":"32988","kv_connector_extra_config":{"proxy_ip":"10.224.2.178","proxy_port":"30001","http_port":"40005","local_ping_port":"32567","proxy_ping_port":"36367","handshake_port":61700,"notify_port":61800}}'
+    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_consumer","kv_port":"32988","kv_connector_extra_config":{"proxy_ip":"'"${PROXY_IP}"'","proxy_port":"30001","http_port":"40005","local_ping_port":"32567","proxy_ping_port":"36367","handshake_port":61700,"notify_port":61800}}'
         
                 #  "--kv-transfer-config={\"kv_connector\":\"MoRIIOConnector\",\"kv_role\":\"kv_consumer\",\"kv_port\":\"32988\",\"kv_connector_extra_config\":{\"proxy_ip\":\"127.0.0.1\",\"proxy_port\":\"30001\",\"http_port\":\"40005\",\"local_ping_port\":\"32567\",\"proxy_ping_port\":\"36367\",\"handshake_port\":60020,\"notify_port\":49657}}"      
 

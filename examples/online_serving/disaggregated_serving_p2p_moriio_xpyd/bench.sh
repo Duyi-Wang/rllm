@@ -1,5 +1,5 @@
  # ISL=4096*8
-ISL=8100
+ISL=4096
 #1000有问题,300没问题   #但是为什么16384数据才能对的上
 OSL=3 #TTFT不受OSL影响  验证了
 # OSL=128
@@ -7,10 +7,10 @@ RATIO=0
 PORT=10001
 # PORT=40005
 export VLLM_TORCH_PROFILER_DIR=/nfs/users/mingzliu/vllm/examples/online_serving/disaggregated_serving_p2p_moriio_xpyd/zlogs
-CONCURRENCY=1 #"8 16 32 64 128"
+CONCURRENCY=4 #"8 16 32 64 128"
 # MODEL_PATH=/shared-inference/models_blog/Qwen3-0.6B
 MODEL_PATH=/shared-inference/models_blog/DeepSeek-V3
-PROMPTS=1
+PROMPTS=32
       vllm bench serve  \
         --dataset-name random \
         --model  QWEN \
