@@ -44,7 +44,6 @@ mkdir -p /mnt/m2m_nobackup/local_logs/
 vllm serve $MODEL_PATH \
     -tp 8  \
     --block-size 1 \
-    --max-num-batched-tokens 8192 \
     --no-enable-prefix-caching \
     --max-model-len 8192 \
     --max-num-seqs 128 \
@@ -53,9 +52,11 @@ vllm serve $MODEL_PATH \
     --host 0.0.0.0 \
     --port 40005 \
     --disable-log-request \
+        --max-num-batched-tokens 32768 \
     --served-model-name QWEN \
     --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_consumer","kv_port":"2988","kv_connector_extra_config":{"proxy_ip":"10.158.214.178","proxy_port":"30001","http_port":"40005","local_ping_port":"63005","proxy_ping_port":"36367","handshake_port":62005,"notify_port":61005}}' \
     2>&1 | tee /mnt/m2m_nobackup/local_logs/vllm_decode_server.log   
+
          #     --enforce-eager \
 
                 #  "--kv-transfer-config={\"kv_connector\":\"MoRIIOConnector\",\"kv_role\":\"kv_consumer\",\"kv_port\":\"32988\",\"kv_connector_extra_config\":{\"proxy_ip\":\"127.0.0.1\",\"proxy_port\":\"30001\",\"http_port\":\"40005\",\"local_ping_port\":\"32567\",\"proxy_ping_port\":\"36367\",\"handshake_port\":60020,\"notify_port\":49657}}"      
