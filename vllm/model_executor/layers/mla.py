@@ -179,7 +179,7 @@ class MultiHeadLatentAttention(CustomOp):
                     self.mla_attn.set_input_positions(positions[:num_decode_tokens])
                 if has_prefill:
                     q[num_decode_tokens:, ..., self.qk_nope_head_dim:], k_pe[num_decode_tokens:] = self.rotary_emb(
-                        positions, q[num_decode_tokens:, ..., self.qk_nope_head_dim:], k_pe[num_decode_tokens:])
+                        positions[num_decode_tokens:], q[num_decode_tokens:, ..., self.qk_nope_head_dim:], k_pe[num_decode_tokens:])
         else:
             q[..., self.qk_nope_head_dim:], k_pe = self.rotary_emb(
                 positions, q[..., self.qk_nope_head_dim:], k_pe)
