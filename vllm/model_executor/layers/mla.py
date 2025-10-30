@@ -170,7 +170,7 @@ class MultiHeadLatentAttention(CustomOp):
             
             if attn_metadata is None:
                 # profile run
-                pass
+                self.mla_attn.set_input_positions(positions)
             else:
                 has_decode = attn_metadata.num_decodes > 0
                 has_prefill = attn_metadata.num_prefills > 0
