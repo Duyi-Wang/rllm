@@ -88,7 +88,7 @@ class MultiHeadLatentAttention(CustomOp):
             assert hasattr(self.indexer, "topk_tokens")
             self.topk_tokens = self.indexer.topk_tokens
             self.topk_indices_buffer = mla_modules.topk_indices_buffer
-            
+
         cos_cache, sin_cache = self.rotary_emb.cos_sin_cache.chunk(2, dim=-1)
 
         # In the MLA backend, kv_cache includes both k_c and
@@ -160,9 +160,13 @@ class MultiHeadLatentAttention(CustomOp):
         q = q.view(-1, self.num_heads, self.qk_head_dim)
         # Add head dim of 1 to k_pe
         k_pe = k_pe.unsqueeze(1)
-        
+
         attn_metadata = get_forward_context().attn_metadata
-        if envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT and attn_metadata.num_decodes > 0:
+        if (
+            envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT
+            and attn_metadata is not None
+            and attn_metadata.num_decodes > 0
+        ):
             # the rope operator for decode is now fused with concat_and_cache_mla operator using fused_qk_rope_cat_and_cache_mla
             self.mla_attn.set_input_positions(positions)
         else:
