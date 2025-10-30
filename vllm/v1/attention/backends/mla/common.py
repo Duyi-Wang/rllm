@@ -1783,7 +1783,7 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
         # Note: fused kernel logic will be handled after decode_q_nope is defined
         # For non-fused path or when there are prefill tokens, cache KV values
         use_aiter_fused_kernel = (envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT 
-                           and has_decode and not has_prefill)
+                           and has_decode)
         if kv_cache.numel() > 0 and not use_aiter_fused_kernel:
             ops.concat_and_cache_mla(
                 k_c_normed,
@@ -1857,8 +1857,8 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
                 q_nope_pe = fused_qk_rope_cat_and_cache_mla(
                     decode_ql_nope,
                     decode_q_pe,
-                    k_c_normed[:num_decode_tokens].unsqueeze(1),
-                    k_pe[:num_decode_tokens],
+                    k_c_normed.unsqueeze(1),
+                    k_pe,
                     kv_cache,
                     attn_metadata.slot_mapping.flatten(),
                     self.positions,
