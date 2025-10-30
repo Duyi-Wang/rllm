@@ -162,6 +162,8 @@ class MultiHeadLatentAttention(CustomOp):
         k_pe = k_pe.unsqueeze(1)
 
         attn_metadata = get_forward_context().attn_metadata
+        if attn_metadata and isinstance(attn_metadata, dict):
+            attn_metadata = attn_metadata[self.mla_attn.layer_name]
         if (
             envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT
             and attn_metadata is not None
