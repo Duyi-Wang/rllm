@@ -1778,30 +1778,6 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
         prefill_k_pe = k_pe[num_decode_tokens:]
         prefill_k_c_normed = k_c_normed[num_decode_tokens:]
 
-        # write the latent and rope to kv cache
-        q_nope_pe, q_nope_zeros = None, None
-        # Note: fused kernel logic will be handled after decode_q_nope is defined
-        # For non-fused path or when there are prefill tokens, cache KV values
-        use_aiter_fused_kernel = (envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT 
-                           and has_decode)
-        if kv_cache.numel() > 0 and not use_aiter_fused_kernel:
-            ops.concat_and_cache_mla(
-                k_c_normed,
-                k_pe.squeeze(1),
-                kv_cache,
-                attn_metadata.slot_mapping.flatten(),
-                kv_cache_dtype=self.kv_cache_dtype,
-                scale=layer._k_scale,
-            )
-
-        if fp8_attention:
-            kv_cache = kv_cache.view(current_platform.fp8_dtype())
-
-        if has_prefill:
-            output[num_decode_tokens:] = self._forward_prefill(
-                prefill_q, prefill_k_c_normed, prefill_k_pe, kv_cache,
-                attn_metadata, layer._k_scale)
-
         if has_decode:
             assert attn_metadata.decode is not None
             decode_q_nope, decode_q_pe = decode_q.split(
@@ -1842,11 +1818,10 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
                 # Convert from (N, B, L) to (B, N, L)
                 decode_ql_nope = decode_ql_nope.transpose(0, 1)
 
-            # Handle fused kernel logic now that decode_q_nope and decode_q_pe are defined
-            if (
-                envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT
-                and kv_cache.numel() > 0
-            ):
+        # write the latent and rope to kv cache
+        q_nope_pe, q_nope_zeros = None, None
+        if kv_cache.numel() > 0:
+            if envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT and has_decode:
                 output_q_nope_zeros = False
                 q_nope_zeros = None
                 if kv_cache.dtype != torch.bfloat16:
@@ -1872,6 +1847,25 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
                 if output_q_nope_zeros == True:
                     q_nope_pe, q_nope_zeros = q_nope_pe
 
+            else:
+                ops.concat_and_cache_mla(
+                    k_c_normed,
+                    k_pe.squeeze(1),
+                    kv_cache,
+                    attn_metadata.slot_mapping.flatten(),
+                    kv_cache_dtype=self.kv_cache_dtype,
+                    scale=layer._k_scale,
+                )
+
+        if fp8_attention:
+            kv_cache = kv_cache.view(current_platform.fp8_dtype())
+
+        if has_prefill:
+            output[num_decode_tokens:] = self._forward_prefill(
+                prefill_q, prefill_k_c_normed, prefill_k_pe, kv_cache,
+                attn_metadata, layer._k_scale)
+
+        if has_decode:
             if fp8_attention:
                 ql_nope_shape = decode_ql_nope.shape
                 decode_ql_nope, _ = ops.scaled_fp8_quant(
