@@ -2021,6 +2021,7 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
             # While it is possible to use embeddings as input just like the
             # multimodal models, it is not desirable for performance since
             # then the embedding layer is not included in the CUDA graph.
+            # logger.info(f"{num_scheduled_tokens=},{self.input_ids.gpu.size()=}")
             input_ids = self.input_ids.gpu[:num_input_tokens]
             inputs_embeds = None
             model_kwargs = self._init_model_kwargs(num_input_tokens)
@@ -3105,6 +3106,8 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
                 inputs_embeds = self.inputs_embeds.gpu[:num_tokens]
                 model_kwargs = self._init_model_kwargs(num_tokens)
             else:
+                # logger.info(f"{num_tokens=},{self.input_ids.gpu.size()=}")
+
                 input_ids = self.input_ids.gpu[:num_tokens]
                 inputs_embeds = None
 
