@@ -161,16 +161,25 @@ class MultiHeadLatentAttention(CustomOp):
         # Add head dim of 1 to k_pe
         k_pe = k_pe.unsqueeze(1)
 
-        attn_metadata = get_forward_context().attn_metadata
-        if attn_metadata and isinstance(attn_metadata, dict):
-            attn_metadata = attn_metadata[self.mla_attn.layer_name]
-        if (
-            envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT
-            and attn_metadata is not None
-            and attn_metadata.num_decodes > 0
-        ):
+        if envs.VLLM_AITER_TRITON_FUSED_ROPE_CACHE_CONCAT:
             # the rope operator for decode is now fused with concat_and_cache_mla operator using fused_qk_rope_cat_and_cache_mla
-            self.mla_attn.set_input_positions(positions)
+
+            attn_metadata = get_forward_context().attn_metadata
+            if attn_metadata and isinstance(attn_metadata, dict):
+                attn_metadata = attn_metadata[self.mla_attn.layer_name]
+            
+            if attn_metadata is None:
+                # profile run
+                pass
+            else:
+                has_decode = attn_metadata.num_decodes > 0
+                has_prefill = attn_metadata.num_prefills > 0
+                num_decode_tokens = attn_metadata.num_decode_tokens
+                if has_decode:
+                    self.mla_attn.set_input_positions(positions[:num_decode_tokens])
+                if has_prefill:
+                    q[num_decode_tokens:, ..., self.qk_nope_head_dim:], k_pe[num_decode_tokens:] = self.rotary_emb(
+                        positions, q[num_decode_tokens:, ..., self.qk_nope_head_dim:], k_pe[num_decode_tokens:])
         else:
             q[..., self.qk_nope_head_dim:], k_pe = self.rotary_emb(
                 positions, q[..., self.qk_nope_head_dim:], k_pe)
