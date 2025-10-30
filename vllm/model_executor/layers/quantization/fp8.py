@@ -530,6 +530,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         if self.use_mori:
             self.moe = None
             self.mori_op = None
+            assert not envs.VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS, "Don't use fusion shared expert and mori-ep for now. Under fix."
 
     def init_mori_config(self, moe):
         self.moe = moe
