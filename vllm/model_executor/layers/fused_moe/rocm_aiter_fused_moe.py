@@ -424,7 +424,6 @@ def rocm_aiter_fused_experts(
     activation: str = "silu",
     apply_router_weight_on_input: bool = False,
     expert_map: Optional[torch.Tensor] = None,
-    # rank0: [1, 1, 1, ..., 1, 0, 0, 0, ..., 0]
     quant_config: Optional[FusedMoEQuantConfig] = None,
     a1_scale: Optional[torch.Tensor] = None,
     num_local_tokens: Optional[torch.Tensor] = None,
@@ -438,7 +437,6 @@ def rocm_aiter_fused_experts(
     # All AITER Fused MoE kernels are expecting the following datatypes
     topk_weights = topk_weights.to(torch.float32)
     topk_ids = topk_ids.to(torch.int32)
-    # print(f'[SMC DEBUG] {topk_ids=}')
 
     expert_mask = expert_map if expert_map is not None else None
 
