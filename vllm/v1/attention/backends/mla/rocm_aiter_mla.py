@@ -70,6 +70,7 @@ class AiterMLADecodeMetadata(MLACommonDecodeMetadata):
     reduce_indptr: Optional[torch.Tensor] = None
     reduce_final_map: Optional[torch.Tensor] = None
     reduce_partial_map: Optional[torch.Tensor] = None
+    max_seqlen_qo: int = 1
 
 
 class AiterMLAMetadata(MLACommonMetadata[AiterMLADecodeMetadata]):
@@ -217,12 +218,6 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
         else:
             max_seqlen_qo = 1
         page_size = self.kv_cache_spec.block_size
-        split_params = {
-            "kv_granularity": max(page_size, 16),
-            "max_seqlen_qo": max_seqlen_qo,
-            "uni_seqlen_qo": max_seqlen_qo,
-            "fast_mode": 1,
-        }
         aiter.get_mla_metadata_v1(
             qo_indptr,
             paged_kv_indptr,
@@ -257,8 +252,9 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
             reduce_indptr=self.reduce_indptr,
             reduce_final_map=self.reduce_final_map,
             reduce_partial_map=self.reduce_partial_map,
-            qo_indptr=qo_indptr)
-        
+            qo_indptr=qo_indptr,
+            max_seqlen_qo=max_seqlen_qo,
+        )
 
         return attn_metadata
 
@@ -337,10 +333,6 @@ class AiterMLAImpl(MLACommonImpl[AiterMLAMetadata]):
 
         kv_buffer = kv_c_and_k_pe_cache.unsqueeze(2)
 
-        # max_seqlen_qo must be 1 except for MTP
-        # TODO: Find the best value for MTP
-        max_seqlen_qo = 2
-
         q_scale_input = None
         if hasattr(layer, '_q_scale_float') and layer._q_scale_float != 1.0:
             q_scale_input = torch.tensor([layer._q_scale_float], dtype=torch.float32, device=q.device)
@@ -352,7 +344,7 @@ class AiterMLAImpl(MLACommonImpl[AiterMLAMetadata]):
                              attn_metadata.decode.paged_kv_indptr,
                              attn_metadata.decode.paged_kv_indices,
                              attn_metadata.decode.paged_kv_last_page_len,
-                             max_seqlen_qo, self.scale,
+                             attn_metadata.decode.max_seqlen_qo, self.scale,
                              True, 0.0, 1,
                              attn_metadata.decode.num_kv_splits_indptr,
                              attn_metadata.decode.work_metadata,
