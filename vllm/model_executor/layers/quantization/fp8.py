@@ -429,7 +429,7 @@ def mori_op_init(quant_dtype, dtype, rank, world_size, hdim, E, topk, max_num_to
     if not _mori_available:
         return None
     world_group = parallel_state.get_world_group().cpu_group
-    print(f'[DEBUG {rank=}] mori_op_init {world_size=}')
+    logger.info_once(f'[mori init] {world_size=} {quant_dtype=} {dtype=} {rank=}')
     assert world_group is not None
     torch._C._distributed_c10d._register_process_group("mori", world_group)
     mori.shmem.shmem_torch_process_group_init("mori")
@@ -534,11 +534,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             logger.warning_once(
                 "CutlassBlockScaledGroupedGemm not supported on the current "
                 "platform.")
-        self.use_mori = (envs.VLLM_ALL2ALL_BACKEND == 'mori')
-        if self.use_mori:
-            self.moe = None
-            self.mori_op = None
-            assert not envs.VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS, "Don't use fusion shared expert and mori-ep for now. Under fix."
+        self.use_mori = False
 
     def init_mori_config(self, moe):
         self.moe = moe
@@ -1111,7 +1107,6 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             from vllm.model_executor.layers.fused_moe.rocm_aiter_fused_moe import (  # noqa: E501
                 rocm_aiter_fused_experts)
             assert self.fused_experts is None
-            # logger.info(f'[SMC DEBUG] {expert_map.shape=} {dispatch_ids=} {layer.w13_weight.shape=}, {layer.w2_weight.shape=}')
             result = rocm_aiter_fused_experts(
                 x,
                 layer.w13_weight,
