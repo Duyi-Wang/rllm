@@ -59,6 +59,7 @@ class AiterMLADecodeMetadata(MLACommonDecodeMetadata):
     paged_kv_last_page_len: Optional[torch.Tensor] = None
     # The query indptr, shape : [num_decode + 1]
     qo_indptr: Optional[torch.Tensor] = None
+    max_seqlen_qo: Optional[int] = None
 
     num_kv_splits_indptr: Optional[torch.Tensor] = None
     batch_split_table: Optional[torch.Tensor] = None
@@ -79,7 +80,7 @@ class AiterMLAMetadata(MLACommonMetadata[AiterMLADecodeMetadata]):
 class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
     # TODO(luka, lucas): audit this as part of:
     #  https://github.com/vllm-project/vllm/issues/22945
-    #cudagraph_support: ClassVar[AttentionCGSupport] = \
+    # cudagraph_support: ClassVar[AttentionCGSupport] = \
     #    AttentionCGSupport.UNIFORM_SINGLE_TOKEN_DECODE
     cudagraph_support: ClassVar[AttentionCGSupport] = \
         AttentionCGSupport.UNIFORM_BATCH
@@ -97,7 +98,6 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
                                      self.kv_cache_spec.block_size)
         max_num_reqs = vllm_config.scheduler_config.max_num_seqs
         max_num_pages = max_num_reqs * max_num_pages_per_req
-
 
         self.speculative_config = vllm_config.speculative_config
 
@@ -209,7 +209,6 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
         max_seqlen_qo = 1
         num_kv_splits_indptr = None
 
-
         # max_seqlen_qo should be set according to the MTP. For example, MTP1 corresponds to max_seqlen_qo=2.
         speculative_config = self.vllm_config.speculative_config
         if speculative_config is not None and speculative_config.num_speculative_tokens is not None:
@@ -243,10 +242,10 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
             topk=-1,
         )
 
-
         attn_metadata = AiterMLADecodeMetadata(
             block_table=block_table_tensor,
             seq_lens=seq_lens_device,
+            max_seqlen_qo=max_seqlen_qo,
             paged_kv_indptr=paged_kv_indptr,
             paged_kv_indices=paged_kv_indices,
             paged_kv_last_page_len=paged_kv_last_page_len,
@@ -257,8 +256,8 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
             reduce_indptr=self.reduce_indptr,
             reduce_final_map=self.reduce_final_map,
             reduce_partial_map=self.reduce_partial_map,
-            qo_indptr=qo_indptr)
-        
+            qo_indptr=qo_indptr,
+        )
 
         return attn_metadata
 
@@ -339,30 +338,34 @@ class AiterMLAImpl(MLACommonImpl[AiterMLAMetadata]):
 
         # max_seqlen_qo must be 1 except for MTP
         # TODO: Find the best value for MTP
-        max_seqlen_qo = 2
 
         q_scale_input = None
         if hasattr(layer, '_q_scale_float') and layer._q_scale_float != 1.0:
             q_scale_input = torch.tensor([layer._q_scale_float], dtype=torch.float32, device=q.device)
         elif hasattr(layer, '_q_scale'):
             q_scale_input = layer._q_scale.to(q.device)
-        
-        aiter_mla_decode_fwd(q, kv_buffer, o,
-                             attn_metadata.decode.qo_indptr,
-                             attn_metadata.decode.paged_kv_indptr,
-                             attn_metadata.decode.paged_kv_indices,
-                             attn_metadata.decode.paged_kv_last_page_len,
-                             max_seqlen_qo, self.scale,
-                             True, 0.0, 1,
-                             attn_metadata.decode.num_kv_splits_indptr,
-                             attn_metadata.decode.work_metadata,
-                             attn_metadata.decode.work_indptr,
-                             attn_metadata.decode.work_info_set,
-                             attn_metadata.decode.reduce_indptr,
-                             attn_metadata.decode.reduce_final_map,
-                             attn_metadata.decode.reduce_partial_map,
-                             q_scale_input,
-                             )
+
+        aiter_mla_decode_fwd(
+            q,
+            kv_buffer,
+            o,
+            attn_metadata.decode.qo_indptr,
+            attn_metadata.decode.paged_kv_indptr,
+            attn_metadata.decode.paged_kv_indices,
+            attn_metadata.decode.paged_kv_last_page_len,
+            attn_metadata.decode.max_seqlen_qo,
+            self.scale,
+            True,
+            0.0,
+            1,
+            attn_metadata.decode.num_kv_splits_indptr,
+            attn_metadata.decode.work_metadata,
+            attn_metadata.decode.work_indptr,
+            attn_metadata.decode.work_info_set,
+            attn_metadata.decode.reduce_indptr,
+            attn_metadata.decode.reduce_final_map,
+            attn_metadata.decode.reduce_partial_map,
+            q_scale_input,
+        )
 
         return o, None
-
