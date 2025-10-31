@@ -1236,7 +1236,12 @@ class FusedMoE(CustomOp):
         if self.use_mori_kernels:
             from vllm.model_executor.layers.quantization.fp8 import (
                 Fp8MoEMethod)
-            assert isinstance(self.quant_method, Fp8MoEMethod)
+            from vllm.model_executor.layers.quantization.compressed_tensors.compressed_tensors_moe import (
+                CompressedTensorsW8A8Fp8MoEMethod
+            )
+            assert not envs.VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS
+            assert isinstance(self.quant_method, (Fp8MoEMethod, CompressedTensorsW8A8Fp8MoEMethod))
+            self.quant_method.use_mori = True
             self.quant_method.init_mori_config(moe)
 
     @property
