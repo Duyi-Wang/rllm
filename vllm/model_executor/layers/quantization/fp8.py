@@ -416,10 +416,18 @@ class Fp8LinearMethod(LinearMethodBase):
 
 from functools import lru_cache
 from vllm.distributed import parallel_state
-import mori
+_mori_available = False
+try:
+    import mori
+    _mori_available = True
+    logger.info_once("mori is available for all2all backend.")
+except ImportError:
+    logger.info_once("mori is not available for all2all backend.")
 
 @lru_cache(maxsize=2)
 def mori_op_init(quant_dtype, dtype, rank, world_size, hdim, E, topk, max_num_tokens):
+    if not _mori_available:
+        return None
     world_group = parallel_state.get_world_group().cpu_group
     print(f'[DEBUG {rank=}] mori_op_init {world_size=}')
     assert world_group is not None
@@ -545,6 +553,8 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                 self.moe.experts_per_token,
                 self.moe.max_num_tokens,
             )
+            if self.mori_op is None:
+                raise RuntimeError(f"mori_op_init failed. MORI available: {_mori_available}")
 
     def create_weights(self, layer: Module, num_experts: int, hidden_size: int,
                        intermediate_size_per_partition: int,
