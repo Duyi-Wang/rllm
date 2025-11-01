@@ -216,31 +216,31 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
         else:
             max_seqlen_qo = 1
         page_size = self.kv_cache_spec.block_size
-        split_params = {
-            "kv_granularity": max(page_size, 16),
-            "max_seqlen_qo": max_seqlen_qo,
-            "uni_seqlen_qo": max_seqlen_qo,
-            "fast_mode": 1,
-        }
-        aiter.get_mla_metadata_v1(
-            qo_indptr,
-            paged_kv_indptr,
-            16,   # nhead // nhead_kv,
-            1,    # nhead_kv,
-            True,
-            self.work_metadata,
-            self.work_info_set,
-            self.work_indptr,
-            self.reduce_indptr,
-            self.reduce_final_map,
-            self.reduce_partial_map,
-            # split_params=split_params,
-            kv_granularity=max(page_size, 16),
-            max_seqlen_qo=max_seqlen_qo,
-            uni_seqlen_qo=max_seqlen_qo,
-            fast_mode=1,
-            topk=-1,
-        )
+        # split_params = {
+        #     "kv_granularity": max(page_size, 16),
+        #     "max_seqlen_qo": max_seqlen_qo,
+        #     "uni_seqlen_qo": max_seqlen_qo,
+        #     "fast_mode": 1,
+        # }
+        # aiter.get_mla_metadata_v1(
+        #     qo_indptr,
+        #     paged_kv_indptr,
+        #     16,   # nhead // nhead_kv,
+        #     1,    # nhead_kv,
+        #     True,
+        #     self.work_metadata,
+        #     self.work_info_set,
+        #     self.work_indptr,
+        #     self.reduce_indptr,
+        #     self.reduce_final_map,
+        #     self.reduce_partial_map,
+        #     # split_params=split_params,
+        #     kv_granularity=max(page_size, 16),
+        #     max_seqlen_qo=max_seqlen_qo,
+        #     uni_seqlen_qo=max_seqlen_qo,
+        #     fast_mode=1,
+        #     topk=-1,
+        # )
 
         attn_metadata = AiterMLADecodeMetadata(
             block_table=block_table_tensor,
