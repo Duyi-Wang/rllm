@@ -134,10 +134,12 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
                                          dtype=torch.uint64,
                                          device=device)
 
-        self.work_indptr = torch.empty([81],
+        from aiter.jit.utils.chip_info import get_cu_num
+        cu_num = get_cu_num()
+        self.work_indptr = torch.empty([cu_num + 1],
                                        dtype=torch.int32,
                                        device=device)
-        self.work_info_set = torch.empty([max_num_reqs * 80, 8],
+        self.work_info_set = torch.empty([max_num_reqs * cu_num, 8],
                                          dtype=torch.int32,
                                          device=device)
 
@@ -147,7 +149,7 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
         self.reduce_final_map = torch.empty([max_num_reqs, 2],
                                             dtype=torch.int32,
                                             device=device)
-        self.reduce_partial_map = torch.empty([max_num_reqs * 80],
+        self.reduce_partial_map = torch.empty([max_num_reqs * cu_num],
                                               dtype=torch.int32,
                                               device=device)
 
