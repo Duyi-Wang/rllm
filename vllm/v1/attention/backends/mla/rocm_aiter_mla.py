@@ -359,7 +359,7 @@ class AiterMLAImpl(MLACommonImpl[AiterMLAMetadata]):
             self.scale,
             True,
             0.0,
-            1,
+            None,
             attn_metadata.decode.num_kv_splits_indptr,
             attn_metadata.decode.work_metadata,
             attn_metadata.decode.work_indptr,
