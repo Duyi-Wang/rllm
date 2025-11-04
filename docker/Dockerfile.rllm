@@ -1,0 +1,38 @@
+ARG BASE_IMAGE=rllm:rllm_base_1103
+
+FROM ${BASE_IMAGE} AS base
+
+ARG VLLM_REPO="https://github.com/Duyi-Wang/rllm.git"
+ARG VLLM_BRANCH="main"
+
+# Install some basic utilities
+RUN apt-get update -q -y && apt-get install -q -y \
+    sqlite3 libsqlite3-dev libfmt-dev libmsgpack-dev libsuitesparse-dev \
+    apt-transport-https ca-certificates wget curl
+
+WORKDIR /app
+RUN git clone ${VLLM_REPO} rllm \
+    && cd rllm \
+    && git checkout ${VLLM_BRANCH}
+
+RUN cd /app/rllm \
+    && python3 -m pip install -r requirements/rocm.txt \
+    && python3 setup.py develop
+
+
+ARG MORI_REPO="https://github.com/ROCm/mori.git"
+ARG MORI_BRANCH="main"
+
+RUN apt-get install -y \
+    libopenmpi-dev \
+    libpci-dev
+
+WORKDIR /app
+RUN git clone ${MORI_REPO} mori \
+    && cd mori \
+    && git checkout ${MORI_BRANCH}
+
+
+RUN cd /app/mori \
+    && git submodule update --init --recursive \
+    && pip3 install .
