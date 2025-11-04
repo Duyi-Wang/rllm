@@ -60,6 +60,10 @@ from vllm.utils.deep_gemm import (get_col_major_tma_aligned_tensor,
                                   is_deep_gemm_supported)
 from vllm.utils.flashinfer import has_flashinfer_moe
 
+import os
+_VLLM_MORI_MAX_TOKENS = int(os.getenv("VLLM_MORI_MAX_TOKENS", "4096"))
+_USE_MORI_V1 = (int(os.getenv("_USE_MORI_V1", "1")) == 1)
+
 if TYPE_CHECKING:
     from vllm.model_executor.models.utils import WeightsMapper
 
@@ -443,12 +447,14 @@ def mori_op_init(quant_dtype, dtype, rank, world_size, hdim, E, topk, max_num_to
             scale_dim=hdim // 128,
             scale_type_size=torch.float32.itemsize,
             max_token_type_size=dtype.itemsize,
-            max_num_inp_token_per_rank=4096,
+            max_num_inp_token_per_rank=_VLLM_MORI_MAX_TOKENS,
             num_experts_per_rank=E // world_size,
             num_experts_per_token=topk,
         )
     else:
         # multi node
+        if _USE_MORI_V1:
+            print('Using mori v1')
         mori_config = mori.ops.EpDispatchCombineConfig(
             data_type=quant_dtype,
             rank=rank,
@@ -457,12 +463,14 @@ def mori_op_init(quant_dtype, dtype, rank, world_size, hdim, E, topk, max_num_to
             scale_dim=hdim // 128,
             scale_type_size=torch.float32.itemsize,
             max_token_type_size=dtype.itemsize,
-            max_num_inp_token_per_rank=4096,
+            max_num_inp_token_per_rank=_VLLM_MORI_MAX_TOKENS,
             num_experts_per_rank=E // world_size,
             num_experts_per_token=topk,
             warp_num_per_block=16,
             block_num=64,
-            kernel_type=mori.ops.EpDispatchCombineKernelType.InterNode,
+            kernel_type=mori.ops.EpDispatchCombineKernelType.InterNodeV1 if _USE_MORI_V1 else mori.ops.EpDispatchCombineKernelType.InterNode,
+            gpu_per_node=8,
+            rdma_block_num=16 if _USE_MORI_V1 else 0,
         )
     mori_op = mori.ops.EpDispatchCombineOp(mori_config)
     return mori_op
