@@ -62,7 +62,7 @@ from vllm.utils.flashinfer import has_flashinfer_moe
 
 import os
 _VLLM_MORI_MAX_TOKENS = int(os.getenv("VLLM_MORI_MAX_TOKENS", "4096"))
-_USE_MORI_V1 = (int(os.getenv("_USE_MORI_V1", "1")) == 1)
+_USE_MORI_V1 = (int(os.getenv("USE_MORI_V1", "1")) == 1)
 
 if TYPE_CHECKING:
     from vllm.model_executor.models.utils import WeightsMapper
@@ -429,7 +429,7 @@ except ImportError:
     logger.info_once("mori is not available for all2all backend.")
 
 @lru_cache(maxsize=2)
-def mori_op_init(quant_dtype, dtype, rank, world_size, hdim, E, topk, max_num_tokens):
+def mori_op_init(quant_dtype, dtype, rank, world_size, hdim, E, topk, max_num_tokens, scale_dim=None):
     if not _mori_available:
         return None
     world_group = parallel_state.get_world_group().cpu_group
@@ -437,6 +437,8 @@ def mori_op_init(quant_dtype, dtype, rank, world_size, hdim, E, topk, max_num_to
     assert world_group is not None
     torch._C._distributed_c10d._register_process_group("mori", world_group)
     mori.shmem.shmem_torch_process_group_init("mori")
+    if scale_dim is None:
+        scale_dim = hdim // 128
     if world_size <= 8:
         # single node
         mori_config = mori.ops.EpDispatchCombineConfig(
@@ -444,7 +446,7 @@ def mori_op_init(quant_dtype, dtype, rank, world_size, hdim, E, topk, max_num_to
             rank=rank,
             world_size=world_size,
             hidden_dim=hdim,
-            scale_dim=hdim // 128,
+            scale_dim=scale_dim,
             scale_type_size=torch.float32.itemsize,
             max_token_type_size=dtype.itemsize,
             max_num_inp_token_per_rank=_VLLM_MORI_MAX_TOKENS,
@@ -460,7 +462,7 @@ def mori_op_init(quant_dtype, dtype, rank, world_size, hdim, E, topk, max_num_to
             rank=rank,
             world_size=world_size,
             hidden_dim=hdim,
-            scale_dim=hdim // 128,
+            scale_dim=scale_dim,
             scale_type_size=torch.float32.itemsize,
             max_token_type_size=dtype.itemsize,
             max_num_inp_token_per_rank=_VLLM_MORI_MAX_TOKENS,
@@ -472,6 +474,7 @@ def mori_op_init(quant_dtype, dtype, rank, world_size, hdim, E, topk, max_num_to
             gpu_per_node=8,
             rdma_block_num=16 if _USE_MORI_V1 else 0,
         )
+    print(f'mori init done')
     mori_op = mori.ops.EpDispatchCombineOp(mori_config)
     return mori_op
 

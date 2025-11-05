@@ -564,6 +564,7 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
                 self.moe.num_experts,
                 self.moe.experts_per_token,
                 self.moe.max_num_tokens,
+                scale_dim=1,
             )
             if self.mori_op is None:
                 raise RuntimeError(f"mori_op_init failed. MORI available: {_mori_available}")
@@ -1007,8 +1008,10 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
             assert self.fused_experts is None
             if self.use_mori:
                 num_token = x.shape[0]
-                scale = None
                 dtype = x.dtype
+                from aiter import QuantType, get_hip_quant
+                quant_func = get_hip_quant(QuantType.per_Token)
+                x, scale = quant_func(x, quant_dtype=torch.float8_e4m3fnuz)
                 (
                     x,
                     dispatch_weights,
@@ -1033,6 +1036,7 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
                 quant_config=self.moe_quant_config,
                 num_local_tokens=dispatch_recv_token_num,
                 dtype=dtype,
+                a1_scale=dispatch_scale,
             )
             if self.use_mori:
                 result = self.mori_op.combine(

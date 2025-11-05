@@ -1893,6 +1893,7 @@ class FusedMoE(CustomOp):
             if indices_type is not None:
                 topk_ids = topk_ids.to(dtype=indices_type)
 
+        import os
         if enable_eplb:
             assert expert_load_view is not None
             assert logical_to_physical_map is not None
@@ -1905,6 +1906,11 @@ class FusedMoE(CustomOp):
                 logical_replica_count=logical_replica_count,
                 indices_type=indices_type,
             )
+        elif os.getenv('VLLM_ENFORCE_EPLB', '0') != '0':
+            temp = torch.randint(0, 256, size=topk_ids.shape,  device=topk_ids.device, dtype=torch.int32)
+            #temp = torch.randperm(topk_ids.shape[0] * topk_ids.shape[1], device=topk_ids.device, dtype=torch.int32) % 256
+            temp = temp.view(-1 , 8)
+            topk_ids = temp.contiguous()
 
         assert topk_ids.dtype == indices_type or indices_type is None
 
