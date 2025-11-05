@@ -1021,6 +1021,7 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
                 ) = self.mori_op.dispatch(x, topk_weights, scale, topk_ids)
             else:
                 dispatch_weights = topk_weights
+                dispatch_scale = None
                 dispatch_ids = topk_ids
                 dispatch_recv_token_num = None
                 dtype = None
