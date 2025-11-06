@@ -3,6 +3,7 @@
 
 from dataclasses import dataclass
 from typing import ClassVar, Optional, Union
+import math
 
 import torch
 
@@ -61,7 +62,6 @@ class AiterMLADecodeMetadata(MLACommonDecodeMetadata):
     qo_indptr: Optional[torch.Tensor] = None
     max_seqlen_qo: Optional[int] = None
 
-    num_kv_splits_indptr: Optional[torch.Tensor] = None
     batch_split_table: Optional[torch.Tensor] = None
     split_table: Optional[torch.Tensor] = None
     splits: Optional[torch.Tensor] = None
@@ -128,6 +128,11 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
                                           max_num_reqs + 1,
                                           dtype=torch.int32,
                                           device=device)
+            
+        if self.speculative_config is not None and self.speculative_config.num_speculative_tokens is not None:
+            self.max_seqlen_qo = self.speculative_config.num_speculative_tokens + 1
+        else:
+            self.max_seqlen_qo = 1
 
         # AITER MLA specific persistent buffers
         self.work_metadata = torch.empty([10],
@@ -136,20 +141,21 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
 
         from aiter.jit.utils.chip_info import get_cu_num
         cu_num = get_cu_num()
+        max_qo_tiles_per_batch = int(math.ceil(self.max_seqlen_qo * self.num_heads / 64))
         self.work_indptr = torch.empty([cu_num + 1],
                                        dtype=torch.int32,
                                        device=device)
-        self.work_info_set = torch.empty([max_num_reqs * cu_num, 8],
+        self.work_info_set = torch.empty([max_num_reqs * cu_num * max_qo_tiles_per_batch, 8],
                                          dtype=torch.int32,
                                          device=device)
 
-        self.reduce_indptr = torch.empty([max_num_reqs + 1],
+        self.reduce_indptr = torch.empty([max_num_reqs * max_qo_tiles_per_batch + 1],
                                          dtype=torch.int32,
                                          device=device)
-        self.reduce_final_map = torch.empty([max_num_reqs, 2],
+        self.reduce_final_map = torch.empty([max_num_reqs * max_qo_tiles_per_batch, 2],
                                             dtype=torch.int32,
                                             device=device)
-        self.reduce_partial_map = torch.empty([max_num_reqs * cu_num],
+        self.reduce_partial_map = torch.empty([max_num_reqs * cu_num * max_qo_tiles_per_batch],
                                               dtype=torch.int32,
                                               device=device)
 
@@ -208,27 +214,13 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
                                      device=device)
 
         import aiter
-        max_seqlen_qo = 1
-        num_kv_splits_indptr = None
 
-        # max_seqlen_qo should be set according to the MTP. For example, MTP1 corresponds to max_seqlen_qo=2.
-        speculative_config = self.vllm_config.speculative_config
-        if speculative_config is not None and speculative_config.num_speculative_tokens is not None:
-            max_seqlen_qo = speculative_config.num_speculative_tokens + 1
-        else:
-            max_seqlen_qo = 1
         page_size = self.kv_cache_spec.block_size
-        split_params = {
-            "kv_granularity": max(page_size, 16),
-            "max_seqlen_qo": max_seqlen_qo,
-            "uni_seqlen_qo": max_seqlen_qo,
-            "fast_mode": 1,
-        }
         aiter.get_mla_metadata_v1(
             qo_indptr,
             paged_kv_indptr,
-            16,   # nhead // nhead_kv,
-            1,    # nhead_kv,
+            self.num_heads // self.kv_cache_spec.num_kv_heads,
+            self.kv_cache_spec.num_kv_heads,
             True,
             self.work_metadata,
             self.work_info_set,
@@ -236,10 +228,9 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
             self.reduce_indptr,
             self.reduce_final_map,
             self.reduce_partial_map,
-            # split_params=split_params,
             kv_granularity=max(page_size, 16),
-            max_seqlen_qo=max_seqlen_qo,
-            uni_seqlen_qo=max_seqlen_qo,
+            max_seqlen_qo=self.max_seqlen_qo,
+            uni_seqlen_qo=self.max_seqlen_qo,
             fast_mode=1,
             topk=-1,
         )
@@ -247,11 +238,10 @@ class AiterMLAMetadataBuilder(MLACommonMetadataBuilder[AiterMLAMetadata]):
         attn_metadata = AiterMLADecodeMetadata(
             block_table=block_table_tensor,
             seq_lens=seq_lens_device,
-            max_seqlen_qo=max_seqlen_qo,
+            max_seqlen_qo=self.max_seqlen_qo,
             paged_kv_indptr=paged_kv_indptr,
             paged_kv_indices=paged_kv_indices,
             paged_kv_last_page_len=paged_kv_last_page_len,
-            num_kv_splits_indptr=num_kv_splits_indptr,
             work_metadata=self.work_metadata,
             work_indptr=self.work_indptr,
             work_info_set=self.work_info_set,
@@ -338,15 +328,6 @@ class AiterMLAImpl(MLACommonImpl[AiterMLAMetadata]):
 
         kv_buffer = kv_c_and_k_pe_cache.unsqueeze(2)
 
-        # max_seqlen_qo must be 1 except for MTP
-        # TODO: Find the best value for MTP
-
-        q_scale_input = None
-        if hasattr(layer, '_q_scale_float') and layer._q_scale_float != 1.0:
-            q_scale_input = torch.tensor([layer._q_scale_float], dtype=torch.float32, device=q.device)
-        elif hasattr(layer, '_q_scale'):
-            q_scale_input = layer._q_scale.to(q.device)
-
         aiter_mla_decode_fwd(
             q,
             kv_buffer,
@@ -357,17 +338,15 @@ class AiterMLAImpl(MLACommonImpl[AiterMLAMetadata]):
             attn_metadata.decode.paged_kv_last_page_len,
             attn_metadata.decode.max_seqlen_qo,
             self.scale,
-            True,
             0.0,
-            None,
-            attn_metadata.decode.num_kv_splits_indptr,
             attn_metadata.decode.work_metadata,
             attn_metadata.decode.work_indptr,
             attn_metadata.decode.work_info_set,
             attn_metadata.decode.reduce_indptr,
             attn_metadata.decode.reduce_final_map,
             attn_metadata.decode.reduce_partial_map,
-            q_scale_input,
+            q_scale=layer._q_scale,
+            kv_scale=layer._k_scale,
         )
 
         return o, None

@@ -10,15 +10,6 @@ from vllm.utils import direct_register_custom_op, is_torch_equal_or_newer
 import vllm.envs as envs
 from aiter.mla import mla_decode_fwd
 
-def dynamic_per_batched_tensor_quant(
-            x: torch.Tensor, dtype: torch.dtype = torch.float8_e4m3fn):
-        DTYPE_MAX = torch.finfo(dtype).max
-        min_val, max_val = x.aminmax()
-        amax = torch.maximum(min_val.abs(), max_val.abs()).clamp(min=1e-10)
-        scale = DTYPE_MAX / amax
-        x_scl_sat = (x * scale).clamp(min=-DTYPE_MAX, max=DTYPE_MAX)
-        return x_scl_sat.to(dtype).contiguous(), scale.float().reciprocal()
-
 def get_aiter_mla_metadata(max_batch_size: int, block_size: int,
                            max_block_per_batch: int,
                            device: torch.device) -> tuple[torch.Tensor, ...]:
@@ -45,25 +36,16 @@ def aiter_mla_decode_fwd(
     kv_last_page_lens,
     max_seqlen_q,
     sm_scale=None,  # 1.0 / (qk_head_dim**0.5)
-    varlen=False,
     logit_cap=0.0,
-    num_kv_splits=None,
-    num_kv_splits_indptr=None,
     work_metadata=None,
     work_indptr=None,
     work_info_set=None,
     reduce_indptr=None,
     reduce_final_map=None,
     reduce_partial_map=None,
-    q_scale_input=None,
+    q_scale=None,
+    kv_scale=None,
 ):
-    if q.dtype == current_platform.fp8_dtype():
-        q_scale = q_scale_input
-        kv_scale = torch.ones([1], dtype=torch.float, device=kv_buffer.device)
-    else:
-        q_scale = None
-        kv_scale = None
-
     mla_decode_fwd(
         q,
         kv_buffer.view(-1, 1, 1, q.shape[-1]),
@@ -75,8 +57,6 @@ def aiter_mla_decode_fwd(
         max_seqlen_q,
         sm_scale=sm_scale,
         logit_cap=logit_cap,
-        num_kv_splits=num_kv_splits,
-        num_kv_splits_indptr=num_kv_splits_indptr,
         work_meta_data=work_metadata,
         work_indptr=work_indptr,
         work_info_set=work_info_set,
@@ -98,17 +78,15 @@ def mla_decode_fwd_impl(
     kv_last_page_lens: torch.Tensor,
     max_seqlen_q: int,
     sm_scale: Optional[float] = None,
-    varlen: Optional[bool] = False,
     logit_cap: Optional[float] = 0.0,
-    num_kv_splits: Optional[int] = 1,
-    num_kv_splits_indptr: Optional[torch.Tensor] = None,
     work_metadata: Optional[torch.Tensor] = None,
     work_indptr: Optional[torch.Tensor] = None,
     work_info_set: Optional[torch.Tensor] = None,
     reduce_indptr: Optional[torch.Tensor] = None,
     reduce_final_map: Optional[torch.Tensor] = None,
     reduce_partial_map: Optional[torch.Tensor] = None,
-    q_scale_input: Optional[torch.Tensor] = None,
+    q_scale: Optional[torch.Tensor] = None,
+    kv_scale: Optional[torch.Tensor] = None,
 ) -> None:
     from aiter.mla import mla_decode_fwd
 
@@ -123,16 +101,14 @@ def mla_decode_fwd_impl(
         max_seqlen_q,
         sm_scale=sm_scale,
         logit_cap=logit_cap,
-        num_kv_splits=num_kv_splits,
-        num_kv_splits_indptr=num_kv_splits_indptr,
         work_meta_data=work_metadata,
         work_indptr=work_indptr,
         work_info_set=work_info_set,
         reduce_indptr=reduce_indptr,
         reduce_final_map=reduce_final_map,
         reduce_partial_map=reduce_partial_map,
-        q_scale=None,
-        kv_scale=None,
+        q_scale=q_scale,
+        kv_scale=kv_scale,
     )
 
 
@@ -146,17 +122,15 @@ def mla_decode_fwd_fake(
     kv_last_page_lens: torch.Tensor,
     max_seqlen_q: int,
     sm_scale: Optional[float] = None,
-    varlen: Optional[bool] = False,
     logit_cap: Optional[float] = 0.0,
-    num_kv_splits: Optional[int] = 1,
-    num_kv_splits_indptr: Optional[torch.Tensor] = None,
     work_metadata: Optional[torch.Tensor] = None,
     work_indptr: Optional[torch.Tensor] = None,
     work_info_set: Optional[torch.Tensor] = None,
     reduce_indptr: Optional[torch.Tensor] = None,
     reduce_final_map: Optional[torch.Tensor] = None,
     reduce_partial_map: Optional[torch.Tensor] = None,
-    q_scale_input: Optional[torch.Tensor] = None,
+    q_scale: Optional[torch.Tensor] = None,
+    kv_scale: Optional[torch.Tensor] = None,
 ) -> None:
     pass
 
