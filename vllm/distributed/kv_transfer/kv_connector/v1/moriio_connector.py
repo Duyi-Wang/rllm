@@ -50,7 +50,9 @@ POP_DONE_RECV = b"pop_done_recv"
 OVER = b"OVER"
 from enum import Enum
 
+import logging
 
+logging.getLogger("aiter").disabled = True
 @dataclass
 class WriteTask:
     request_id: str
@@ -78,6 +80,7 @@ class LayerTransferPlan:
 class RemoteAllocInfo:
     block_ids: list[int]
     writes_done: int = 0
+    decode_dp_rank: int = 0
     transfer_offset: tuple[list[int], list[int], list[int]] | None = None
 
 
@@ -129,7 +132,9 @@ except ImportError:
 
 class MoRIIOWrapper:
 
-    def __init__(self, moriio_engine=None):
+    def __init__(self, moriio_engine=None,tp_rank=0,dp_rank=0):
+        self.tp_rank=tp_rank
+        self.dp_rank=dp_rank
         self.moriio_engine = moriio_engine
         self.remote_memory_metadata = None
         self.local_memory_registered = False
@@ -311,15 +316,16 @@ class MoRIIOWrapper:
     def _handle_structured_message(self, data: dict):
         req_id = data["req_id"]
         int_list = data.get("int_list", [])
+        decode_dp_rank=data.get("decode_rank",0)
         assert len(int_list) > 0, "int_list cannot be empty in remote allocate message"
         msg_type = data.get("type", "unknown")
 
         with self.lock:
             self.done_remote_allocate_req.append(req_id)
-            self.done_remote_allocate_req_dict[req_id] = RemoteAllocInfo(
-                int_list)
+            self.done_remote_allocate_req_dict[req_id] = RemoteAllocInfo(block_ids=int_list,decode_dp_rank=decode_dp_rank)
 
     def _handle_completion_message(self, msg: str):
+        # logger.info(f"MoRIIO received block message: {msg}")
         with self.lock:
             if get_role() == ROLE.PRODUCER:
                 # logger.debug(f"P received req id {msg} for release")
@@ -400,6 +406,7 @@ class ReqMeta:
     remote_notify_port: int
     remote_engine_id: str
     tp_size: int
+    remote_dp_size: int
 
 
 class MoRIIOConnectorMetadata(KVConnectorMetadata):
@@ -438,6 +445,7 @@ class MoRIIOConnectorMetadata(KVConnectorMetadata):
             remote_notify_port=kv_transfer_params.get('remote_notify_port'),
             # P workers don't need to receive tp_size from proxy here.
             tp_size=kv_transfer_params.get("tp_size", 1),
+            remote_dp_size=kv_transfer_params.get("remote_dp_size", 8)
         )
         if write_mode:
             self.reqs_to_save[request_id] = _req
@@ -553,7 +561,7 @@ class MoRIIOConnectorScheduler:
         self.side_channel_port = (
             self.vllm_config.kv_transfer_config.kv_connector_extra_config[
                 'handshake_port'],  # envs.VLLM_NIXL_SIDE_CHANNEL_PORT +
-            self.vllm_config.parallel_config.data_parallel_rank *
+            (self.vllm_config.parallel_config.data_parallel_rank+1) *
             self.vllm_config.parallel_config.tensor_parallel_size)
         logger.info(
             f"==========> Initializing MoRIIO Scheduler {engine_id = },{self.side_channel_port = }"
@@ -562,7 +570,7 @@ class MoRIIOConnectorScheduler:
         self.side_notify_port = self.vllm_config.kv_transfer_config.kv_connector_extra_config[
             'notify_port']  # envs.VLLM_NIXL_SIDE_CHANNEL_PORT +
         self.tp_size = self.vllm_config.parallel_config.tensor_parallel_size
-
+        self.dp_rank = self.vllm_config.parallel_config.data_parallel_rank
         self.is_producer = vllm_config.kv_transfer_config.kv_role == "kv_producer"
         # Requests that need to start recv/send.
         # New requests are added by update_state_after_alloc in
@@ -625,8 +633,10 @@ class MoRIIOConnectorScheduler:
         data = {
             "req_id": req_id,
             "int_list": int_list or [],
+            "decode_rank": self.dp_rank,
             "type": "remote_blocks"
         }
+        # logger.info(f"MoRIIO send notify block for prefill, {data= },{host= },{port= }")
         serialized_data = msgpack.dumps(data)
         self.paths[path].send(serialized_data)
 
@@ -638,7 +648,7 @@ class MoRIIOConnectorScheduler:
             connector_worker: Optional["MoRIIOConnectorWorker"] = None):
 
         params = request.kv_transfer_params
-
+        # logger.info(f"enter alloc :{request.request_id}")
         if params.get("do_remote_decode"):
             local_block_ids = blocks.get_block_ids()[0]
             self._reqs_need_save[request.request_id] = (request,
@@ -674,11 +684,17 @@ class MoRIIOConnectorScheduler:
                     pass
             else:
                 # Moriio in write mode, do remote prefill(consumer)
-
+                remote_dp_rank=request.kv_transfer_params[
+                        'remote_dp_rank'] 
                 for tp_index in range(self.tp_size):
+                    
                     cur_port = request.kv_transfer_params[
-                        'remote_notify_port'] + tp_index
-                    # cur_port=self.side_notify_port+tp_index
+                        'remote_notify_port'] + (remote_dp_rank+1)*(tp_index+1)-1
+                    # logger.info(f"{request.kv_transfer_params['remote_notify_port']= },")
+                    # # cur_port=self.side_notify_port+tp_index
+                    # logger.debug(f"MoRIIO send notify block for prefill,{params.get("remote_host")=} ,{cur_port = }")
+                    # logger.info(f"{tp_index= },{self.dp_rank= },{cur_port= }")
+
                     self.send_notify_block(req_id=request.request_id,
                                            int_list=blocks.get_block_ids()[0],
                                            host=params.get("remote_host"),
@@ -812,10 +828,15 @@ class MoRIIOConnectorWorker:
         self._rank = get_world_group().rank
         self._local_rank = get_world_group().local_rank
         self.tp_rank = get_tensor_model_parallel_rank()
-
+        self.dp_rank= vllm_config.parallel_config.data_parallel_rank
+        logger.info(f"MoRIIO Worker init {self.tp_rank = },{self.dp_rank= }"
+                    f",{self.is_producer= }")
         self.local_ip = get_ip()
         self.local_kv_port = int(self.kv_transfer_config.kv_port)
-        self.local_kv_port = self.local_kv_port + self.tp_rank
+        
+        self.local_kv_port = self.local_kv_port + (self.tp_rank+1)*(self.dp_rank+1)
+        
+        
         self.proxy_ip = self.kv_transfer_config.kv_connector_extra_config[
             "proxy_ip"]
         self.proxy_port = int(
@@ -825,7 +846,7 @@ class MoRIIOConnectorWorker:
             self.kv_transfer_config.
             kv_connector_extra_config["local_ping_port"])
 
-        self.local_ping_port = self.local_ping_port + self.tp_rank
+        self.local_ping_port = self.local_ping_port + (self.tp_rank+1)*(self.dp_rank+1)
 
         self.proxy_ping_port = int(
             self.kv_transfer_config.
@@ -837,7 +858,8 @@ class MoRIIOConnectorWorker:
                                   kv_connector_extra_config['handshake_port'])
         self.notify_port = int(
             self.kv_transfer_config.kv_connector_extra_config['notify_port'])
-        self.notify_port = self.notify_port + self.tp_rank
+        
+        self.notify_port = self.notify_port + (self.tp_rank+1)*(self.dp_rank+1) -1
         # self.local_metadata_port = int(self.kv_transfer_config.kv_connector_extra_config['metadata_port'])
         '''
         ping: local_ip:local_ping_port -> proxy_ip:proxy_ping_port
@@ -854,7 +876,7 @@ class MoRIIOConnectorWorker:
         self._handle_request_thread = None
         self._ping_thread = None
         engine_suffix = str(self.local_ip) + ":" + str(
-            self.handshake_port) + ":tp " + str(self.tp_rank)
+            self.handshake_port) + ":tp " + str(self.tp_rank)+":dp " + str(self.dp_rank)
         if not self.is_producer:
             self.poller = zmq.Poller()
             self.metadata_socket = self.zmq_context.socket(zmq.ROUTER)
@@ -887,7 +909,7 @@ class MoRIIOConnectorWorker:
             f"{self.local_ip = },{self._rank = },{self._local_rank = },{self.local_kv_port = },{self.proxy_ip = },{self.proxy_port = },{self.local_ping_port = },{self.proxy_ping_port = }"
         )
         # Agent.
-        self.moriio_wrapper = MoRIIOWrapper()
+        self.moriio_wrapper = MoRIIOWrapper(tp_rank=self.tp_rank,dp_rank=self.dp_rank)
         self.moriio_wrapper.set_moriio_engine(self.moriio_engine)
 
         self.moriio_wrapper.set_backend_type(BackendType.RDMA)
@@ -926,9 +948,11 @@ class MoRIIOConnectorWorker:
         #     vllm_config.parallel_config.tensor_parallel_size)
         self.side_channel_port: int = (
             self.handshake_port +
-            self.vllm_config.parallel_config.data_parallel_rank *
-            self.vllm_config.parallel_config.tensor_parallel_size)
-
+                (self.dp_rank + 1) * (self.tp_rank + 1)  # 正确的写法
+        )
+        #why wuxiao 
+        logger.info(f"MoRIIO Worker init {self.tp_rank = },{self.dp_rank= }")
+        logger.info(f"MoRIIO side channel_port port: {self.side_channel_port}, han")
         # Metadata.
         self.engine_id: EngineId = engine_id
 
@@ -1050,6 +1074,10 @@ class MoRIIOConnectorWorker:
         REQUEUE_DELAY = 0.01
         while True:
             still_defer: list[WriteTask] = []
+            if self.dp_rank==0:
+                c=0
+            if self.dp_rank==1:
+                b=0
             if self._deferred_tasks:
                 for task in self._deferred_tasks:
                     if self._remote_blocks_ready(task):
@@ -1176,10 +1204,12 @@ class MoRIIOConnectorWorker:
         if request_info.writes_done == self.num_layers:
             #TODO:  wait current req_id transfer complete
             self.moriio_wrapper.waiting_for_transfer_complete()
+            the_remote_port=task.remote_notify_port  + (self.tp_rank+1)*(request_info.decode_dp_rank+1)-1
+            # logger.info(f"send notify for write req {request_id=} {the_remote_port=}")
             self.moriio_wrapper.send_notify(
                 request_id,
                 task.remote_ip,
-                task.remote_notify_port  + self.tp_rank
+                the_remote_port,
             )
 
     def _execute_write_task(self, task: WriteTask):
@@ -1190,6 +1220,8 @@ class MoRIIOConnectorWorker:
             # logger.debug("Request %s remote block ids not ready", task.request_id)
             return
         task.event.synchronize()
+        
+        task.dst_engine_id=task.dst_engine_id+"_dp"+str(request_info.decode_dp_rank)
         sessions = self._get_built_session(task.dst_engine_id)
         plan = self._prepare_layer_transfer(task, request_info)
         self._do_layer_write(plan, sessions)
@@ -1268,7 +1300,7 @@ class MoRIIOConnectorWorker:
     @staticmethod
     def _moriio_handshake_listener(
             metadata: MoRIIOAgentMetadata, ready_event: threading.Event,
-            base_port: int, tp_rank: int,
+            base_port: int, tp_rank: int,dp_rank:int,
             layer_name_to_local_kv_cache_metadata: dict):
         """Background thread for getting new MoRIIO handshakes."""
 
@@ -1280,8 +1312,11 @@ class MoRIIOConnectorWorker:
 
         # Listen for new requests for metadata.
         host = "*"
-        path = make_zmq_path("tcp", host, base_port + tp_rank)
-        logger.info(f"======> Starting listening on path: {path}")
+        logger.info(f"======> mori handeshake starting listening on baseport: {base_port}")
+
+        path = make_zmq_path("tcp", host, base_port )
+        logger.info(f"======> mori handeshake sstarting listening on path: {path}")
+
         with zmq_ctx(zmq.ROUTER, path) as sock:
             ready_event.set()
             while True:
@@ -1294,13 +1329,14 @@ class MoRIIOConnectorWorker:
                     sock.send_multipart(
                         (identity, b"",
                          encoded_data))  # send local mori io engine meta data
-
+                    logger.info("MoRIIO handshake listener sent metadata to %s")
                     # now we send tensor meta data for each block
                     buf = pickle.dumps(layer_name_to_local_kv_cache_metadata)
                     sock.send_multipart((identity, b"", buf))
                 elif msg == POP_DONE_RECV:
                     _, req_id = sock.recv_multipart()
-
+                    logger.info("MoRIIO handshake listener received done recv for req %s",
+                                req_id.decode())
                 else:
                     pass
 
@@ -1310,6 +1346,7 @@ class MoRIIOConnectorWorker:
         port: int,
         remote_tp_size: int,
         expected_engine_id: str,
+        remote_dp_rank:int,
     ) -> dict[int, str]:
         """Do a MoRIIO handshake with a remote instance."""
 
@@ -1326,9 +1363,10 @@ class MoRIIOConnectorWorker:
             self.
             engine_id] // remote_tp_size
         tp_ratio = 1
-        p_remote_rank = self.tp_rank // tp_ratio
+        # p_remote_rank = self.tp_rank // tp_ratio
+        p_remote_rank = (self.tp_rank+1)*(remote_dp_rank+1) 
         path = make_zmq_path("tcp", host, port + p_remote_rank)
-        logger.info("Querying metadata on path: %s at remote rank %s", path,
+        logger.info("handeshake Querying metadata on path: %s at remote rank %s", path,
                     p_remote_rank)
 
         # Send query for the request.
@@ -1343,15 +1381,15 @@ class MoRIIOConnectorWorker:
             decoder = msgspec.msgpack.Decoder(MoRIIOAgentMetadata)
             metadata = decoder.decode(metadata_bytes)
             got_metadata_time = time.perf_counter()
-            logger.debug("MoRIIO handshake: get metadata took: %s",
+            logger.info("MoRIIO handshake: get metadata took: %s",
                          got_metadata_time - start_time)
 
             # Ensure engine id matches.
             # pass for write
-            if metadata.engine_id != expected_engine_id:
-                raise RuntimeError(f"Remote MoRIIO agent engine ID mismatch. "
-                                   f"Expected {expected_engine_id},"
-                                   f"received {metadata.engine_id}.")
+            # if metadata.engine_id != expected_engine_id:
+            #     raise RuntimeError(f"Remote MoRIIO agent engine ID mismatch. "
+            #                        f"Expected {expected_engine_id},"
+            #                        f"received {metadata.engine_id}.")
 
             # Register Remote agent.
             # remote_agent_name = self.add_remote_agent(metadata, p_remote_rank,remote_tp_size)
@@ -1361,6 +1399,9 @@ class MoRIIOConnectorWorker:
                 metadata.agent_metadata)
             remote_agent_name = self.add_remote_agent(metadata, p_remote_rank,
                                                       remote_tp_size)
+            logger.info(f"MoRIIO handshake: registered remote agent "
+                        f"{remote_agent_name=} for engine ID "
+                        f"{expected_engine_id=},f{path= }")
             if len(self.local_kv_cache_metadata) > 0:
                 logger.warning(
                     f"{len(self.local_kv_cache_metadata) = },maybe you didnt clear this buffer correctly"
@@ -1377,7 +1418,7 @@ class MoRIIOConnectorWorker:
                 assert 0, f"Unexpected frame! {received_frame = }"
             buf = received_frame[1]
             self.layer_name_to_remote_kv_cache_metadata[
-                metadata.engine_id] = pickle.loads(buf)
+                expected_engine_id] = pickle.loads(buf)
 
             setup_agent_time = time.perf_counter()
             logger.debug("MoRIIO handshake: add agent took: %s",
@@ -1397,6 +1438,55 @@ class MoRIIOConnectorWorker:
             host = meta.remote_host
             port = int(meta.remote_handshake_port)
             tp_size = int(meta.tp_size)
+            remote_dp_size = int(meta.remote_dp_size)
+        # TODO: handle failure state of future in the
+        # callback, we want to fail the request in this case.
+        def request_ready(_f: Future[Any], entry=(req_id, meta)):
+            logger.info("MoRIIO handshake done for request %s", req_id)
+            self._ready_requests.put(entry)
+            self.load_ready_flag = True
+            self.write_ready_flags[remote_engine_id] = True
+            
+        if remote_dp_size > 1:
+            # 修复1: 正确初始化future列表
+            fut_list = []
+            
+            for cur_dp_rank in range(remote_dp_size):
+                # 修复2: 为每个DP rank创建独立的engine_id
+                dp_engine_id = f"{remote_engine_id}_dp{cur_dp_rank}"
+                
+                # 提交握手任务
+                future = self._handshake_initiation_executor.submit(
+                    self._moriio_handshake, host, port, tp_size, dp_engine_id, cur_dp_rank
+                )
+                fut_list.append(future)
+                
+                # 为每个future单独设置回调
+                def done_callback(f: Future[dict[int, str]], eid=dp_engine_id):
+                    with self._handshake_lock:
+                        # 修复3: 从handshake_futures中删除对应的engine_id
+                        self._handshake_futures.pop(eid, None)
+                        try:
+                            self._remote_agents[eid] = f.result()
+                        except Exception:
+                            logger.exception("Handshake with %s failed", eid)
+                
+                future.add_done_callback(done_callback)
+                self._handshake_futures[dp_engine_id] = future
+            
+                # 修复4: 使用Future列表而不是单个future
+            # fut = fut_list
+            def wait_all_dp():
+                for future in fut_list:
+                    future.result()  # 等待所有future完成
+                return True
+
+            all_done_future = self._handshake_initiation_executor.submit(wait_all_dp)
+            all_done_future.add_done_callback(request_ready)
+            fut = all_done_future
+        else:
+            remote_engine_id = f"{remote_engine_id}_dp0"
+
             fut = self._handshake_initiation_executor.submit(
                 self._moriio_handshake, host, port, tp_size, remote_engine_id)
 
@@ -1412,14 +1502,9 @@ class MoRIIOConnectorWorker:
             fut.add_done_callback(done_callback)
             self._handshake_futures[remote_engine_id] = fut
 
-        # TODO: handle failure state of future in the
-        # callback, we want to fail the request in this case.
-        def request_ready(_f: Future[Any], entry=(req_id, meta)):
-            self._ready_requests.put(entry)
-            self.load_ready_flag = True
-            self.write_ready_flags[remote_engine_id] = True
 
-        fut.add_done_callback(request_ready)
+
+            fut.add_done_callback(request_ready)
 
     def register_kv_caches(self, kv_caches: dict[str, torch.Tensor]):
         """Register the KV Cache data in moriio."""
@@ -1545,7 +1630,7 @@ class MoRIIOConnectorWorker:
         ready_event = threading.Event()
         self._moriio_handshake_listener_t = threading.Thread(
             target=self._moriio_handshake_listener,
-            args=(metadata, ready_event, self.side_channel_port, self.tp_rank,
+            args=(metadata, ready_event, self.side_channel_port, self.tp_rank,self.dp_rank,
                   self.layer_name_to_local_kv_cache_metadata),
             daemon=True,
             name="moriio_handshake_listener")
@@ -1622,15 +1707,19 @@ class MoRIIOConnectorWorker:
         if GLOBAL_MORIIO_MODE == MoRIIOMode.READ:
             return
         remote_engine_id = None
+        
+        
         for req_id, meta in metadata.reqs_to_save.items():
             remote_engine_id = meta.remote_engine_id
+            # we only need to check if dp0 in rank
             remote_engine_id = str(meta.remote_host) + ":" + str(
                 meta.remote_handshake_port)
+        
             meta.remote_engine_id = remote_engine_id
 
             # TODO: mz get_remote_engine_id() for engine_id mapping.
-
-            if remote_engine_id not in self._remote_agents:
+            dp0_remote_engine_id = f"{remote_engine_id}_dp0"
+            if dp0_remote_engine_id not in self._remote_agents:
                 # Initiate handshake with remote engine to exchange metadata.
                 with self._handshake_lock:
                     if remote_engine_id not in self._remote_agents:
@@ -1723,7 +1812,8 @@ class MoRIIOConnectorWorker:
 
     def _write_blocks_for_req(self, req_id: str, meta: ReqMeta, layer_name,
                               kv_layer):
-
+        # logger.debug(f"write block for req {req_id} to remote engine "
+        #             f"{meta.remote_engine_id}")
         self.schedule_write_blocks(request_id=req_id,
                                    dst_engine_id=meta.remote_engine_id,
                                    local_block_ids=meta.local_block_ids,

@@ -5,6 +5,7 @@ OSL=3 #TTFT不受OSL影响  验证了
 # OSL=128
 RATIO=0
 PORT=10001
+PORT=8023
 # PORT=40005
 export VLLM_TORCH_PROFILER_DIR=/nfs/users/mingzliu/vllm/examples/online_serving/disaggregated_serving_p2p_moriio_xpyd/zlogs
 CONCURRENCY=4 #"8 16 32 64 128"

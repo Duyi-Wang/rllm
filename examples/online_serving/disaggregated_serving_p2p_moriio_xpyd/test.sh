@@ -2,8 +2,11 @@
 # curl -X POST -s http://10.235.192.61:36367/v1/completions -H "Content-Type: application/json" -d '{"model": "deepseek-ai/DeepSeek-R1","prompt": "Hi,how are you?","max_tokens": 100,"temperature": 0, "top_k":1}' | awk -F'"' '{print $22}'
 
 
-curl -X POST -s http://127.0.0.1:10001/v1/completions -H "Content-Type: application/json" -d '{"model": "QWEN","prompt": "the us is ?","max_tokens": 10,"temperature": 0, "top_k":1}' | awk -F'"' '{print $22}'
+# curl -X POST -s http://127.0.0.1:10001/v1/completions -H "Content-Type: application/json" -d '{"model": "QWEN","prompt": "the us is ?","max_tokens": 10,"temperature": 0, "top_k":1}' | awk -F'"' '{print $22}'
+curl -X POST -s http://127.0.0.1:10001/v1/completions -H "Content-Type: application/json" -d '{"prompt": "the us is ?","max_tokens": 10,"temperature": 0, "top_k":1}' | awk -F'"' '{print $22}'
+# curl -X POST -s http://127.0.0.1:10001/v1/completions -H "Content-Type: application/json" -d '{"prompt": "1,2,3,4,5,6","max_tokens": 10,"temperature": 0, "top_k":1,"data_parallel_rank":7}' | awk -F'"' '{print $22}'
 
+# curl -X POST -s http://127.0.0.1:8023/v1/completions -H "Content-Type: application/json" -d '{"prompt": "the us is ?","max_tokens": 10,"temperature": 0, "top_k":1}' | awk -F'"' '{print $22}'
 
 # curl -X POST -s http://127.0.0.1:10001/v1/completions -H "Content-Type: application/json" -d '{"model": "deepseek-ai/DeepSeek-R1","prompt": "the us is ?","max_tokens": 32000,"temperature": 0, "top_k":1}' | awk -F'"' '{print $22}'
 # timeout 130 curl -X POST -s http://127.0.0.1:10001/v1/completions -H "Content-Type: application/json" -d '{"model": "deepseek-ai/DeepSeek-R1","prompt": "the us is ?","max_tokens": 32000,"temperature": 0, "top_k":1}' --max-time 10 

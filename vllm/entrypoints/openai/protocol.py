@@ -1042,6 +1042,8 @@ class CompletionRequest(OpenAIBaseModel):
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     user: Optional[str] = None
+    data_parallel_rank: Optional[int] = None
+
 
     # --8<-- [start:completion-sampling-params]
     use_beam_search: bool = False
