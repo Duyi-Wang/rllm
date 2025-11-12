@@ -81,11 +81,9 @@ class EagleProposer:
                                == CompilationLevel.PIECEWISE and
                                not self.vllm_config.model_config.enforce_eager
                                and not self.speculative_config.enforce_eager)
-        #logger.info(f"mtp graph = {self.use_cuda_graph}, {self.vllm_config.compilation_config.level}, {self.vllm_config.model_config.enforce_eager}, {self.speculative_config.enforce_eager}")
         self.cudagraph_batch_sizes = list(
             reversed(
                 self.vllm_config.compilation_config.cudagraph_capture_sizes))
-        #logger.info(f'mtp graph {self.cudagraph_batch_sizes}')
 
         # persistent buffers for cuda graph
         self.input_ids = torch.zeros(self.max_num_tokens,
@@ -170,6 +168,17 @@ class EagleProposer:
         mm_embeds: Optional[list[torch.Tensor]] = None,
         cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE,
     ) -> torch.Tensor:
+        logger.info("[Debug] Running EAGLE draft model for speculative decoding.")
+        logger.info(f"[Debug] target_token_ids :{target_token_ids}, "
+                    f"target_positions :{target_positions}, "
+                    f"target_hidden_states :{target_hidden_states}, "
+                    f"next_token_ids :{next_token_ids}, "
+                    f"last_token_indices :{last_token_indices}, "
+                    f"common_attn_metadata :{common_attn_metadata}, "
+                    f"sampling_metadata :{sampling_metadata}, "
+                    f"mm_embeds :{mm_embeds}, "
+                    f"cudagraph_runtime_mode :{cudagraph_runtime_mode}, "
+                    f"batch_descriptor :{batch_descriptor}")
         num_tokens = target_token_ids.shape[0]
         batch_size = next_token_ids.shape[0]
 
@@ -238,7 +247,7 @@ class EagleProposer:
         batch_descriptor = BatchDescriptor(num_tokens=num_input_tokens,
                                            uniform_decode=True)
 
-        #logger.info(f"mtp graph {batch_descriptor}, {cudagraph_runtime_mode}")
+        logger.info(f"[Debug] Start to run EAGLE draft model forward pass, self.model")
         with set_forward_context(per_layer_attn_metadata,
                                  self.vllm_config,
                                  cudagraph_runtime_mode=cudagraph_runtime_mode,
@@ -255,6 +264,7 @@ class EagleProposer:
                 hidden_states = last_hidden_states
             else:
                 last_hidden_states, hidden_states = ret_hidden_states
+        logger.info(f"[Debug] Finished EAGLE draft model forward pass, self.model")
         sample_hidden_states = last_hidden_states[last_token_indices]
         logits = self.model.compute_logits(sample_hidden_states)
 
@@ -391,6 +401,7 @@ class EagleProposer:
 
         # [batch_size, num_speculative_tokens]
         draft_token_ids = torch.stack(draft_token_ids_list, dim=1)
+        logger.info("Finished EAGLE draft model for speculative decoding.")
         return draft_token_ids
 
     def prepare_next_token_ids_cpu(
@@ -921,7 +932,12 @@ class EagleProposer:
         batch_descriptor,
         ubatch_slices
     ) -> None:
-        #logger.info(f"draft moddel dummy_run {batch_descriptor}, {cudagraph_runtime_mode}")
+        logger.info("[Debug] Running dummy forward pass for EAGLE draft model.")
+        logger.info(f"[Debug] num_tokens: {num_tokens}, "
+                    f"num_tokens_across_dp: {num_tokens_across_dp}, "
+                    f"cudagraph_runtime_mode: {cudagraph_runtime_mode}, "
+                    f"batch_descriptor: {batch_descriptor}, "
+                    f"ubatch_slices: {ubatch_slices}")
         with set_forward_context(None, self.vllm_config,
                                 num_tokens=num_tokens,
                                 num_tokens_across_dp=num_tokens_across_dp,
@@ -941,6 +957,7 @@ class EagleProposer:
                 hidden_states=self.hidden_states[:num_tokens],
                 inputs_embeds=inputs_embeds,
             )
+        logger.info("[Debug] Finished dummy forward pass for EAGLE draft model.")
 
     def _get_attention_metadata_builder(
             self) -> list[AttentionMetadataBuilder]:
