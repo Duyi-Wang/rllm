@@ -351,12 +351,15 @@ def set_forward_context(
                 f"batch_descriptor: {batch_descriptor}, ubatch_slices: {ubatch_slices}")
     global forward_start_time
     need_to_track_batchsize = track_batchsize and attn_metadata is not None
+    logger.info(f"[Debug] need_to_track_batchsize: {need_to_track_batchsize}")
     if need_to_track_batchsize:
         forward_start_time = time.perf_counter()
 
+    logger.info(f"[Debug] Start to create dp_metadata if needed")
     dp_metadata: Optional[DPMetadata] = None
     if vllm_config.parallel_config.data_parallel_size > 1 and (
             attn_metadata is not None or num_tokens is not None):
+        logger.info(f"[Debug] Start to create dp_metadata")
         dp_metadata = DPMetadata.make(vllm_config.parallel_config,
                                       attn_metadata, num_tokens or 0,
                                       num_tokens_across_dp)
