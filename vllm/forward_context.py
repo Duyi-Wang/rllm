@@ -344,6 +344,11 @@ def set_forward_context(
     can be attention metadata, etc.
     Here we can inject common logic for every model forward pass.
     """
+    logger.info(f"[Debug] set_forward_context called with attn_metadata: {attn_metadata}, "
+                f"virtual_engine: {virtual_engine}, "
+                f"num_tokens: {num_tokens}, num_tokens_across_dp: {num_tokens_across_dp}, "
+                f"cudagraph_runtime_mode: {cudagraph_runtime_mode}, "
+                f"batch_descriptor: {batch_descriptor}, ubatch_slices: {ubatch_slices}")
     global forward_start_time
     need_to_track_batchsize = track_batchsize and attn_metadata is not None
     if need_to_track_batchsize:
@@ -355,15 +360,19 @@ def set_forward_context(
         dp_metadata = DPMetadata.make(vllm_config.parallel_config,
                                       attn_metadata, num_tokens or 0,
                                       num_tokens_across_dp)
-
+    logger.info(f"[Debug] Start to create forward context with dp_metadata")
     forward_context = create_forward_context(attn_metadata, vllm_config,
                                              virtual_engine, dp_metadata,
                                              cudagraph_runtime_mode,
                                              batch_descriptor, ubatch_slices)
+    logger.info(f"[Debug] Forward context created")
 
     try:
+        logger.info(f"[Debug] Override forward context")
         with override_forward_context(forward_context):
+            logger.info(f"[Debug] Inside forward context")
             yield
+            logger.info(f"[Debug] outside forward context")
     finally:
         global last_logging_time, batchsize_logging_interval
         if need_to_track_batchsize:
