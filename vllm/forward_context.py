@@ -110,7 +110,9 @@ class DPMetadata:
         num_tokens_tensor = torch.tensor(num_tokens_across_dp,
                                          device=device,
                                          dtype=torch.int32)
+        logger.info(f"[Debug] Before all_reduce num_tokens_tensor: {num_tokens_tensor}")
         dist.all_reduce(num_tokens_tensor, group=group)
+        logger.info(f"[Debug] After all_reduce num_tokens_tensor: {num_tokens_tensor}")
         return num_tokens_tensor.cpu()
 
     # Get the cumulative tokens across sequence parallel ranks.
