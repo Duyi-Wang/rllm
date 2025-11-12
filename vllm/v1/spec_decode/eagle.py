@@ -177,8 +177,7 @@ class EagleProposer:
                     f"common_attn_metadata :{common_attn_metadata}, "
                     f"sampling_metadata :{sampling_metadata}, "
                     f"mm_embeds :{mm_embeds}, "
-                    f"cudagraph_runtime_mode :{cudagraph_runtime_mode}, "
-                    f"batch_descriptor :{batch_descriptor}")
+                    f"cudagraph_runtime_mode :{cudagraph_runtime_mode}")
         num_tokens = target_token_ids.shape[0]
         batch_size = next_token_ids.shape[0]
 
