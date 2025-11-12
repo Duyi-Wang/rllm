@@ -839,7 +839,7 @@ class EagleProposer:
         with set_model_tag("eagle_head"):
             self.model = get_model(vllm_config=self.vllm_config,
                                    model_config=draft_model_config)
-
+        logger.info(f"[Debug] self.model is {self.model.__class__.__name__}")
         draft_attn_layer_names = (
             get_layers_from_vllm_config(self.vllm_config, Attention).keys() -
             target_attn_layer_names)

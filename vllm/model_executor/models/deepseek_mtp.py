@@ -6,7 +6,6 @@ from typing import Optional
 import torch
 import torch.nn as nn
 from transformers import PretrainedConfig
-import logging
 from vllm.config import VllmConfig
 from vllm.model_executor.layers.fused_moe import FusedMoE
 from vllm.model_executor.layers.layernorm import RMSNorm
@@ -27,7 +26,9 @@ from vllm.model_executor.layers.fused_moe.rocm_aiter_fused_moe import (
     is_rocm_aiter_moe_enabled,
 )
 
-logging.getLogger(__name__)
+from vllm.logger import init_logger
+
+logger = init_logger(__name__)
 
 class SharedHead(nn.Module):
 
@@ -113,6 +114,7 @@ class DeepSeekMultiTokenPredictor(nn.Module):
             for idx in range(self.mtp_start_layer_idx,
                              self.mtp_start_layer_idx + self.num_mtp_layers)
         })
+        logger.info(f"[Debug] MTP layers num : {len(self.layers)}")
         self.embed_tokens = VocabParallelEmbedding(
             config.vocab_size,
             config.hidden_size,
@@ -169,8 +171,11 @@ class DeepSeekMTP(nn.Module, SupportsPP):
         inputs_embeds: Optional[torch.Tensor] = None,
         spec_step_idx: int = 0,
     ) -> torch.Tensor:
+        logger.info(f"[Debug] DeepSeekMTP forward called.")
+        logger.info(f"[Debug] input_ids : {input_ids}, positions: {positions}, hidden_states: {hidden_states}, inputs_embeds: {inputs_embeds}, spec_step_idx: {spec_step_idx}")
         hidden_states = self.model(input_ids, positions, hidden_states,
                                    inputs_embeds, spec_step_idx)
+        logger.info(f"[Debug] DeepSeekMTP forward done.")
         return hidden_states
 
     def compute_logits(
@@ -198,7 +203,6 @@ class DeepSeekMTP(nn.Module, SupportsPP):
 
         params_dict = dict(self.named_parameters())
         loaded_params: set[str] = set()
-        logging.info(params_dict.keys())
         for name, loaded_weight in weights:
             if "rotary_emb.inv_freq" in name:
                 continue
