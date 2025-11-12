@@ -252,6 +252,7 @@ class EagleProposer:
                                  cudagraph_runtime_mode=cudagraph_runtime_mode,
                                  batch_descriptor=batch_descriptor,
                                  num_tokens=num_input_tokens):
+            logger.info(f"[Debug] Inside set_forward_context of EAGLE draft model")
             ret_hidden_states = self.model(
                 input_ids=input_ids,
                 positions=self.positions[:num_input_tokens],
