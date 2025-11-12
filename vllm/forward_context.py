@@ -178,10 +178,12 @@ class DPMetadata:
         num_tokens: int,
         num_tokens_across_dp_cpu: Optional[torch.Tensor] = None
     ) -> "DPMetadata":
-
+        logger.info(f"[Debug] DPMetadata.make called with num_tokens: {num_tokens}, "
+                    f"num_tokens_across_dp_cpu: {num_tokens_across_dp_cpu}")
         assert parallel_config.data_parallel_size > 1
         dp_size = parallel_config.data_parallel_size
         dp_rank = parallel_config.data_parallel_rank
+        logger.info(f"[Debug] DPMetadata.make dp_size: {dp_size}, dp_rank: {dp_rank}")
         if attn_metadata is not None and hasattr(attn_metadata,
                                                  "num_prefill_tokens"):
             # for v0 attention backends
@@ -190,16 +192,20 @@ class DPMetadata:
         else:
             # for v1 attention backends or no attn_metadata
             batchsize = num_tokens
+        logger.info(f"[Debug] DPMetadata.make batchsize: {batchsize}")
 
         # If num_tokens_across_dp is None, it will be computed by all_reduce
         # Otherwise, num_tokens_across_dp[dp_rank] should be equal to batchsize
         assert (num_tokens_across_dp_cpu is None
                 or num_tokens_across_dp_cpu[dp_rank] == batchsize
                 ), f"{num_tokens_across_dp_cpu[dp_rank]} {batchsize}"
+        logger.info(f"[Debug] Start to compute num_tokens_across_dp_cpu if needed, num_tokens_across_dp_cpu: {num_tokens_across_dp_cpu}")
         if num_tokens_across_dp_cpu is None:
             num_tokens_across_dp_cpu = DPMetadata.num_tokens_across_dp(
                 batchsize, dp_size, dp_rank)
+        logger.info(f"[Debug] num_tokens_across_dp_cpu computed: {num_tokens_across_dp_cpu}")
         max_tokens_across_dp_cpu = torch.max(num_tokens_across_dp_cpu)
+        logger.info(f"[Debug] max_tokens_across_dp_cpu: {max_tokens_across_dp_cpu}")
         return DPMetadata(max_tokens_across_dp_cpu, num_tokens_across_dp_cpu)
 
     @contextmanager
