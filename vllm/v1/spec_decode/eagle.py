@@ -81,11 +81,9 @@ class EagleProposer:
                                == CompilationLevel.PIECEWISE and
                                not self.vllm_config.model_config.enforce_eager
                                and not self.speculative_config.enforce_eager)
-        #logger.info(f"mtp graph = {self.use_cuda_graph}, {self.vllm_config.compilation_config.level}, {self.vllm_config.model_config.enforce_eager}, {self.speculative_config.enforce_eager}")
         self.cudagraph_batch_sizes = list(
             reversed(
                 self.vllm_config.compilation_config.cudagraph_capture_sizes))
-        #logger.info(f'mtp graph {self.cudagraph_batch_sizes}')
 
         # persistent buffers for cuda graph
         self.input_ids = torch.zeros(self.max_num_tokens,
@@ -238,7 +236,6 @@ class EagleProposer:
         batch_descriptor = BatchDescriptor(num_tokens=num_input_tokens,
                                            uniform_decode=True)
 
-        #logger.info(f"mtp graph {batch_descriptor}, {cudagraph_runtime_mode}")
         with set_forward_context(per_layer_attn_metadata,
                                  self.vllm_config,
                                  cudagraph_runtime_mode=cudagraph_runtime_mode,
@@ -915,16 +912,12 @@ class EagleProposer:
     def dummy_run(
         self,
         num_tokens,
-        attn_metadata,
-        num_tokens_across_dp,
         cudagraph_runtime_mode,
         batch_descriptor,
         ubatch_slices
     ) -> None:
-        #logger.info(f"draft moddel dummy_run {batch_descriptor}, {cudagraph_runtime_mode}")
         with set_forward_context(None, self.vllm_config,
                                 num_tokens=num_tokens,
-                                num_tokens_across_dp=num_tokens_across_dp,
                                 cudagraph_runtime_mode=cudagraph_runtime_mode,
                                 batch_descriptor=batch_descriptor,
                                 ubatch_slices=ubatch_slices):
