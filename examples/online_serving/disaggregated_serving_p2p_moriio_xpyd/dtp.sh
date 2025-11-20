@@ -10,6 +10,7 @@ ulimit -c 0
 mkdir -p /mnt/m2m_nobackup/local_logs/
 
 
+# export MORIIO_CONNECTOR_READ_MODE=1
 
 export VLLM_ENFORCE_EPLB=1 
 export VLLM_ALL2ALL_BACKEND=mori 
@@ -26,9 +27,7 @@ export VLLM_ENFORCE_EPLB=0
 MODEL_PATH=/mnt/m2m_nobackup/models/deepseek-ai/DeepSeek-V3-5layer
 
 vllm serve $MODEL_PATH        \
- -tp 1  \
- -dp 8     \
- --enable-expert-parallel         \
+ -tp 8  \
  --port 40005     \
  --block-size 1          \
  --no-enable-prefix-caching \
@@ -40,6 +39,5 @@ vllm serve $MODEL_PATH        \
  --kv-cache-dtype fp8          \
  --compilation-config '{"cuadgraph_mode": "FULL_DECODE_ONLY", "custom_ops": ["+quant_fp8"]}'         \
  --trust-remote-code \
-  --max_num_seqs 256\
-    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_consumer","kv_port":"6301","kv_connector_extra_config":{"proxy_ip":"10.158.215.60","proxy_port":"30001","http_port":"40005","local_ping_port":"4583","proxy_ping_port":"36367","handshake_port":7305,"notify_port":61005}}' \
+    --kv-transfer-config '{"kv_connector":"MoRIIOConnector","kv_role":"kv_consumer","kv_port":"6301","kv_connector_extra_config":{"proxy_ip":"10.158.215.60","proxy_port":"30001","http_port":"40005","local_ping_port":"7583","proxy_ping_port":"36367","handshake_port":7305,"notify_port":61005}}' \
     2>&1 | tee /mnt/m2m_nobackup/local_logs/vllm_prefill_server.log   

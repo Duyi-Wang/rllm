@@ -16,7 +16,6 @@ import json
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from typing import Dict,List
-import asyncio
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
@@ -27,8 +26,6 @@ request_nums = 0
 app = Quart(__name__)
 
 yield_chunk = set()
-IP_PORT_PATTERN = re.compile(r'//(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)')
-#re.search(r'//(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)', url).groups()
 
 count=1
 from itertools import count
@@ -39,16 +36,7 @@ counter = count(1)
 def count_print(msg):
     current_count = next(counter)
     print(f"---mingzhilog[{current_count}] : {msg}")
-def _append_whole_dict_unique(target_list, data_dict):
-    new_filtered = {k: v for k, v in data_dict.items() if k != "index"}
-    for existed in target_list:
-        existed_filtered = {k: v for k, v in existed.items() if k != "index"}
-        if existed_filtered == new_filtered:
-            return False
-    print("!!APPEND!!", data_dict)
-    target_list.append(data_dict)
-_list_lock = threading.RLock()
-
+    
 def _listen_for_register(hostname, port):
     context = zmq.Context()
     router_socket = context.socket(zmq.ROUTER)
@@ -74,15 +62,12 @@ def _listen_for_register(hostname, port):
             elif data['type'] == "register" and data['role'] == "P":
                 if data['request_address'] not in prefill_instances:
                     # prefill_instances.append(data['request_address'])
-                    with _list_lock:
-                        _append_whole_dict_unique(prefill_instances, data)
-                    # prefill_instances._append_whole_dict_unique(data)
+                    prefill_instances.append(data)
 
             elif data["type"] == "register" and data['role'] == "D":
                 if data['request_address'] not in decode_instances:
                     # decode_instances.append(data['request_address'])
-                    with _list_lock:
-                        _append_whole_dict_unique(decode_instances, data)
+                    decode_instances.append(data)
             # print(f"zovlog:====> recv {data},remote_addr={remote_addr},{prefill_instances = },{decode_instances = }")
 
 def start_service_discovery(hostname, port):
@@ -97,22 +82,21 @@ def start_service_discovery(hostname, port):
     _listener_thread.start()
     return _listener_thread
 
-async def send_request_to_prefill(endpoint,req_data,request_id,p_endpoint,pip,pports):
+async def send_request_to_prefill(endpoint,req_data,request_id,remote_decode_instance,dip,dport):
     # print(f"zovlog:======> proxy {endpoint = }")
-    req_data_copy =req_data
+    req_data_copy = copy.deepcopy(req_data)
     
     # 本地做prefill,且decode只需要pull模式,所以prefill不需要在这里知晓远程decode任何信息
-   
-    req_data_copy['kv_transfer_params'].update({
+    req_data_copy['kv_transfer_params'] = {
         "do_remote_decode": True,
         "do_remote_prefill": False,
-        "remote_handshake_port": p_endpoint['handshake_port'],
-        "remote_notify_port":p_endpoint['notify_port'],
+        "remote_handshake_port":remote_decode_instance['handshake_port'],
+        "remote_notify_port":remote_decode_instance['notify_port'],
         "remote_engine_id": None,
         "remote_block_ids": None,
-        "remote_host":pip ,
-        "remote_port": pports,
-    })
+        "remote_host": dip,
+        "remote_handshake_port": dport
+    }
     req_data_copy["stream"] = False
     req_data_copy["max_tokens"] = 1
     if "max_completion_tokens" in req_data_copy:
@@ -120,7 +104,7 @@ async def send_request_to_prefill(endpoint,req_data,request_id,p_endpoint,pip,pp
     if "stream_options" in req_data_copy:
         del req_data_copy["stream_options"]
     # print(f"zovlog ========================== send response to prefill {req_data_copy}")
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6 * 6000 * 6000)) as session:
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6 * 60 * 60)) as session:
         headers = {
             "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}",
             "X-Request-Id": request_id
@@ -132,53 +116,29 @@ async def send_request_to_prefill(endpoint,req_data,request_id,p_endpoint,pip,pp
                 #         yield chunk_bytes
             else:
                 raise RuntimeError("send_request_to_prefill response.status != 200,response.statuus = ",response.status)
-async def start_decode_request(endpoint, req_data, request_id):
-    """立即启动请求，返回响应对象"""
-    session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6 * 6000 * 6000))
-    headers = {
-        "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}",
-        "X-Request-Id": request_id
-    }
-    response = await session.post(url=endpoint, json=req_data, headers=headers)
-    return session, response
-
-async def stream_decode_response(session, response, request_id):
-    """流式处理响应"""
-    try:
-        if response.status == 200:
-            async for chunk_bytes in response.content.iter_chunked(1024):
-                # if request_id not in yield_chunk:
-                #     yield_chunk.add(request_id)
-                # else:
-                #     logger.info("!!!pass yidle")
-                yield chunk_bytes
-        else:
-            raise RuntimeError(f"decode response.status != 200, status = {response.status}")
-    finally:
-        await session.close()
 # to debug
 async def send_request_to_decode(endpoint,req_data,request_id):
     # print(f"zovlog ========================== send response to decode {request_id}")
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6 * 6000 * 6000)) as session:
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6 * 60 * 60)) as session:
         headers = {
             "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}",
             "X-Request-Id": request_id
         }
         async with session.post(url=endpoint, json=req_data, headers=headers) as response:
             if response.status == 200:
-                async for chunk_bytes in response.content.iter_chunked(1024):
-                        # if request_id not in yield_chunk:
-                        #     # count_print(f"zovlog yield chunk for {request_id}") #128 
-                        #     yield_chunk.add(request_id)
-                        #     # b=0
-                        #     # print(f"!!!{chunk_bytes.decode('utf-8')}")
-                        #     # try:
-                        #     #     print("!!!xxx")
-                        #     #     print(json.loads(chunk_bytes.decode('utf-8'))['choices'][0]['text'])
-                        #     # except Exception as e:
-                        #     #     print(f"no text: {e}")
-                        # else:
-                        #     logger.info("!!!pass yidle")
+                async for chunk_bytes in response.content.iter_chunked(10240):
+                        if request_id not in yield_chunk:
+                            # count_print(f"zovlog yield chunk for {request_id}") #128 
+                            yield_chunk.add(request_id)
+                            # b=0
+                            # print(f"!!!{chunk_bytes.decode('utf-8')}")
+                            # try:
+                            #     print("!!!xxx")
+                            #     print(json.loads(chunk_bytes.decode('utf-8'))['choices'][0]['text'])
+                            # except Exception as e:
+                            #     print(f"no text: {e}")
+                        else:
+                            logger.info("!!!pass yidle")
                             # print("pass yidle")
                         yield chunk_bytes
             else:
@@ -189,96 +149,37 @@ async def send_request_to_decode(endpoint,req_data,request_id):
 @app.route("/v1/chat/completions", methods=["POST"])
 async def handle_request():
     # print(f"zovlog:-----------> enter request")
-    try:
-        import time
-        
-        # st1=time.perf_counter()
-        global request_nums
-        # extract_ip_port = lambda url: re.search(r'//(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)', url).groups()
-        def extract_ip_port_fast(url):
-            return IP_PORT_PATTERN.search(url).groups()
-        req_data = await request.get_json()
-        # st1p5=time.perf_counter()
-        request_id = str(uuid.uuid4())
+    global request_nums
+    extract_ip_port = lambda url: re.search(r'//(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)', url).groups()
+    req_data = await request.get_json()
+    # print(f"req_data = {req_data}")
+    request_id = str(uuid.uuid4())
+    prefill_instance_endpoint = prefill_instances[request_nums % len(prefill_instances)]
+    decode_instance_endpoint = decode_instances[request_nums % len(decode_instances)]
+    dip, dport = extract_ip_port(decode_instance_endpoint['request_address'])
+    response_json = await send_request_to_prefill(prefill_instance_endpoint['request_address'],req_data,request_id,decode_instance_endpoint,dip,dport)
+    # 现在decode可以获取prefill的所有信息了
+    ip, port = extract_ip_port(prefill_instance_endpoint['request_address'])
+    response_json['kv_transfer_params']["do_remote_decode"] = False
+    response_json['kv_transfer_params']["do_remote_prefill"] = True
+    response_json['kv_transfer_params']["remote_host"] = ip
+    response_json['kv_transfer_params']["remote_handshake_port"] = port # 似乎没用
+    response_json['kv_transfer_params']["remote_handshake_port"] = prefill_instance_endpoint['handshake_port']
+    # response_json['kv_transfer_params']["remote_handshake_port"] = prefill_instance_endpoint['handshake_port']
+    response_json['kv_transfer_params']["remote_notify_port"] = prefill_instance_endpoint['notify_port']
+    req_data['max_tokens'] -= 1
+    # req_data['prompt'] += response_json['choices'][0]['text'] # comment out for ttft testing
 
-        # print(f"req_data = {req_data}")
-        prefill_instance_endpoint=None
-        decode_instance_endpoint=None
-        # print(f"zovlog:-----------> before select instance {prefill_instances=
-        # if False:
-        # =0
-        dp_rank=request_nums % 8
-        # dp_rank=0
-        req_data['data_parallel_rank'] = dp_rank
-        if len(prefill_instances)==2 and len(decode_instances)==2:
-            index_list=[[0,0],[1,0],[0,1],[1,1]]
-            index=index_list[request_nums % len(index_list)]
-            prefill_instance_endpoint = prefill_instances[index[0]]
-            decode_instance_endpoint = decode_instances[index[1]]
-        
-        else:
-            pid=request_nums % len(prefill_instances)
-            did=request_nums % len(decode_instances)
-            prefill_instance_endpoint = prefill_instances[pid]
-            decode_instance_endpoint = decode_instances[did]
+    kv_transfer_params = response_json.get('kv_transfer_params', {})
+    # print(f"zovlog:========> proxy kv_transfer_params = {kv_transfer_params}")
+    if kv_transfer_params:
+        req_data["kv_transfer_params"] = kv_transfer_params
 
-        dip,dport= extract_ip_port_fast(decode_instance_endpoint['request_address'])
-        # preq_data = copy.deepcopy(req_data)
-        ip, port = extract_ip_port_fast(prefill_instance_endpoint['request_address'])
-
-    
-
-
-       
-        # decode_task= asyncio.create_task(  send_request_to_decode(decode_instance_endpoint['request_address'],req_data,request_id))
-        req_data_to_prefill = copy.deepcopy(req_data)
-        # print("send to prefill req_data:",req_data_to_prefill)
-        req_data_to_prefill['kv_transfer_params']={}
-        req_data_to_prefill['kv_transfer_params']['remote_dp_size']=decode_instance_endpoint['dp_size']
-        req_data_to_prefill['kv_transfer_params']['remote_tp_size']=decode_instance_endpoint['tp_size']
-        send_prefill_task = asyncio.create_task(send_request_to_prefill(prefill_instance_endpoint['request_address'],req_data_to_prefill,request_id,decode_instance_endpoint,dip,dport))
-        
-        
-        
-        
-        # 现在decode可以获取prefill的所有信息了
-        ip, port = extract_ip_port_fast(prefill_instance_endpoint['request_address'])
-        req_data['max_tokens'] -= 1
-        req_data['data_parallel_rank'] = dp_rank
-        req_data['kv_transfer_params'] = {
-            "do_remote_decode": False,
-            "do_remote_prefill": True,
-            "remote_handshake_port": prefill_instance_endpoint['handshake_port'],
-            "remote_notify_port":prefill_instance_endpoint['notify_port'],
-            "remote_engine_id": None,
-            "remote_block_ids": None,
-            "remote_host":ip ,
-            "remote_port": port,
-        }
-        req_data['kv_transfer_params']['remote_dp_size'] = prefill_instance_endpoint['dp_size']
-        req_data['kv_transfer_params']['remote_tp_size'] = prefill_instance_endpoint['tp_size']
-        if 'data_parallel_rank' in req_data:
-            req_data['kv_transfer_params']['remote_dp_rank'] = req_data['data_parallel_rank']
-            del req_data['data_parallel_rank']
-            
-            
-        decode_request_task = asyncio.create_task(
-            start_decode_request(decode_instance_endpoint['request_address'], req_data, request_id)
-        )
-       
-
-        session, decode_response = await decode_request_task
-        stream_generator = stream_decode_response(session, decode_response, request_id)
-        response = await make_response(stream_generator)
-
-    
-
-        request_nums += 1
-
-        return response
-    except Exception as e:
-        print(e)
-        pass
+    generator = send_request_to_decode(decode_instance_endpoint['request_address'],req_data,request_id)
+    response = await make_response(generator)
+    request_nums += 1
+    # print(f"zovlog:-----------> quit request")
+    return response
 async def send_profile_cmd(req_data, profiler_cmd):
     global request_nums
     
@@ -290,7 +191,7 @@ async def send_profile_cmd(req_data, profiler_cmd):
         "X-Request-Id": str(uuid.uuid4())
     }
 
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6 * 6000 * 6000)) as session:
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6 * 60 * 60)) as session:
         # 发送到prefill
         prefill_response = await session.post(
             f"http://0.0.0.0:20005/{profiler_cmd}_profile",
@@ -299,7 +200,7 @@ async def send_profile_cmd(req_data, profiler_cmd):
         
         # 发送到decode
         decode_response = await session.post(
-            f"http://10.194.132.29:40005/{profiler_cmd}_profile", 
+            f"http://10.194.132.77:40005/{profiler_cmd}_profile", 
             json=req_data, headers=headers
         )
         
@@ -363,12 +264,11 @@ async def stop_profile():
 if __name__ == '__main__':
     t = start_service_discovery("0.0.0.0", 36367)
     app.debug = True 
-    app.config['BODY_TIMEOUT'] = 360000
-    app.config['RESPONSE_TIMEOUT'] = 360000
+    app.config['BODY_TIMEOUT'] = 3600
+    app.config['RESPONSE_TIMEOUT'] = 3600
 
     app.run(host="0.0.0.0", port=10001)
     t.join()
-
 
 
 

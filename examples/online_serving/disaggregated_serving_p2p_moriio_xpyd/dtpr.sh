@@ -10,6 +10,7 @@ ulimit -c 0
 mkdir -p /mnt/m2m_nobackup/local_logs/
 
 
+export MORIIO_CONNECTOR_READ_MODE=1
 
 export VLLM_ENFORCE_EPLB=1 
 export VLLM_ALL2ALL_BACKEND=mori 
@@ -26,9 +27,7 @@ export VLLM_ENFORCE_EPLB=0
 MODEL_PATH=/mnt/m2m_nobackup/models/deepseek-ai/DeepSeek-V3-5layer
 
 vllm serve $MODEL_PATH        \
- -tp 1  \
- -dp 8     \
- --enable-expert-parallel         \
+ -tp 8  \
  --port 40005     \
  --block-size 1          \
  --no-enable-prefix-caching \
