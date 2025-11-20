@@ -21,8 +21,8 @@ export VLLM_ROCM_USE_AITER_RMSNORM=1
 export VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS=0 
 export VLLM_ROCM_USE_AITER_SAMPLING=1 
 export VLLM_ENFORCE_EPLB=0
-MODEL_PATH=/mnt/m2m_nobackup/models/deepseek-ai/DeepSeek-V3
-# MODEL_PATH=/mnt/m2m_nobackup/models/deepseek-ai/DeepSeek-V3-5layer
+# MODEL_PATH=/mnt/m2m_nobackup/models/deepseek-ai/DeepSeek-V3
+MODEL_PATH=/mnt/m2m_nobackup/models/deepseek-ai/DeepSeek-V3-5layer
 
 vllm serve $MODEL_PATH        \
  -tp 1  \

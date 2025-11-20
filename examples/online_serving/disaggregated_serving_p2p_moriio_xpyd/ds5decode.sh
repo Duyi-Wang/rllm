@@ -53,6 +53,7 @@ vllm serve $MODEL_PATH \
     --kv-cache-dtype fp8 \
     --host 0.0.0.0 \
     --port 40005 \
+    --num
     --disable-log-request \
         --max-num-batched-tokens 32768 \
     --served-model-name QWEN \

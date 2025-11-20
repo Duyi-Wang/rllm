@@ -3,17 +3,8 @@
 
 
 # curl -X POST -s http://127.0.0.1:10001/v1/completions -H "Content-Type: application/json" -d '{"model": "QWEN","prompt": "the us is ?","max_tokens": 10,"temperature": 0, "top_k":1}' | awk -F'"' '{print $22}'
-curl -X POST -s http://127.0.0.1:10001/v1/completions -H "Content-Type: application/json" -d '{"prompt": "the us is ?","max_tokens": 10,"temperature": 0, "top_k":1}' | awk -F'"' '{print $22}'
-# curl -X POST -s http://127.0.0.1:10001/v1/completions -H "Content-Type: application/json" -d '{"prompt": "za us is ?the us is ?the us is ?the us is ?the us is ?the us is ?the us is ?","max_tokens": 10,"temperature": 0, "top_k":1}' | awk -F'"' '{print $22}'
-# curl -X POST -s http://127.0.0.1:10001/v1/completions -H "Content-Type: application/json" -d '{"prompt": "whats your name?","max_tokens": 10,"temperature": 0, "top_k":1}' | awk -F'"' '{print $22}'
-# curl -X POST -s http://127.0.0.1:10001/v1/completions -H "Content-Type: application/json" -d '{"prompt": "the us is ?he us is ?he us is ?he us is ?he us is ?hehe us is ?he us is ?he he us is ?he us is ?he he us is ?he us is ?he he us is ?he us is ?he he us is ?he us is ?he  us is ?he us is ?","max_tokens": 10,"temperature": 0, "top_k":1}' | awk -F'"' '{print $22}'
-
-# curl -X POST -s http://127.0.0.1:10001/v1/completions -H "Content-Type: application/json" -d '{"prompt": "xxxxx","max_tokens": 10,"temperature": 0, "top_k":1,"data_parallel_rank":7}' | awk -F'"' '{print $22}'
-
+curl -X POST -s http://127.0.0.1:10001/v1/completions -H "Content-Type: application/json" -d '{"prompt": "2,4,6,8,10,12,","max_tokens": 10,"temperature": 0, "top_k":1}' | awk -F'"' '{print $22}'
 # curl -X POST -s http://127.0.0.1:10001/v1/completions -H "Content-Type: application/json" -d '{"prompt": "1,2,3,4,5,6","max_tokens": 10,"temperature": 0, "top_k":1,"data_parallel_rank":7}' | awk -F'"' '{print $22}'
-# curl -X POST -s http://127.0.0.1:10001/v1/completions -H "Content-Type: application/json" -d '{"prompt": "1,2,3,4,5,6,1,2,3,4,5,6,1,2,3,4,5,6,1,2,3,4,5,6,1,2,3,4,5,6,1,2,3,4,5,6,1,2,3,4,5,6,1,2,3,4,5,6,1,2,3,4,5,6,1,2,3,4,5,6","max_tokens": 10,"temperature": 0, "top_k":1}' | awk -F'"' '{print $22}'
-
-# curl -X POST -s http://127.0.0.1:10001/v1/completions -H "Content-Type: application/json" -d '{"prompt": "2,3,4,5,6,1,2,3,4,5,6,1,2,3,4,5,6,1,2,3,4,5,6,1,2,3,4,5,6,1,2,3,4,5,6,1,2,3,4,5,6,1,2,3,4,5,6,1,2,3,4,5,6,1,2,3,4,5,6","max_tokens": 10,"temperature": 0, "top_k":1}' | awk -F'"' '{print $22}'
 
 # curl -X POST -s http://127.0.0.1:8023/v1/completions -H "Content-Type: application/json" -d '{"prompt": "the us is ?","max_tokens": 10,"temperature": 0, "top_k":1}' | awk -F'"' '{print $22}'
 
